@@ -102,6 +102,7 @@
         <version.scalameta>4.14.2</version.scalameta>
         <version.slf4j>2.0.17</version.slf4j>
         <version.metainf>1.11</version.metainf>
+        <version.pdfbox>3.0.5</version.pdfbox>
 
         <!-- Plugin versions -->
         <version.plugin.antlr4>${version.antlr4}</version.plugin.antlr4>
@@ -173,6 +174,13 @@
                 <groupId>net.sf.extjwnl</groupId>
                 <artifactId>extjwnl-data-wn31</artifactId>
                 <version>${version.extjwnl.data}</version>
+            </dependency>
+
+            <!-- PDFBox for extracting text from PDF submissions in the semantic engine -->
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${version.pdfbox}</version>
             </dependency>
 
             <!-- LOGGER -->

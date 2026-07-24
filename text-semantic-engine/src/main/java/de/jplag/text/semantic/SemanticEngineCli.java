@@ -37,6 +37,9 @@ public class SemanticEngineCli implements Callable<Integer> {
     @Option(names = {"-o", "--output"}, description = "Directory for the JSON/CSV reports. Console only if omitted.")
     private File outputDirectory;
 
+    @Option(names = "--jplag-report", description = "Write a .jplag report archive viewable in the JPlag report viewer.")
+    private File jplagReportFile;
+
     @Option(names = "--lemmatize", negatable = true, defaultValue = "true", description = "Reduce words to their base form. Default: ${DEFAULT-VALUE}.")
     private boolean lemmatize;
 
@@ -70,6 +73,10 @@ public class SemanticEngineCli implements Callable<Integer> {
         if (outputDirectory != null) {
             new ResultWriter().write(results, outputDirectory);
             logger.info("Wrote reports to {}", outputDirectory.getAbsolutePath());
+        }
+        if (jplagReportFile != null) {
+            new JPlagReportWriter().write(submissions, results, jplagReportFile);
+            logger.info("Wrote JPlag report to {} (open with the JPlag report viewer)", jplagReportFile.getAbsolutePath());
         }
         return 0;
     }

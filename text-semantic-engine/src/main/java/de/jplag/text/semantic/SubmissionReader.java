@@ -4,10 +4,12 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -34,6 +36,7 @@ import de.jplag.text.ParserAdapter;
 public class SubmissionReader {
 
     private static final Logger logger = LoggerFactory.getLogger(SubmissionReader.class);
+    private static final String PDF_EXTENSION = ".pdf";
 
     private final ParserAdapter parserAdapter;
     private final List<String> fileExtensions;
@@ -64,25 +67,35 @@ public class SubmissionReader {
             throw new IOException("Cannot list directory: " + rootDirectory);
         }
         Arrays.sort(children, Comparator.comparing(File::getName));
-        for (File child : children) {
-            Set<File> files = child.isDirectory() ? gatherFiles(child) : (hasAcceptedExtension(child) ? Set.of(child) : Set.of());
-            if (files.isEmpty()) {
-                continue;
+        // Text extracted from PDF submissions is written to this temporary directory, then removed afterwards.
+        Path pdfTextDirectory = Files.createTempDirectory("jplag-semantic-pdf");
+        try {
+            for (File child : children) {
+                Set<File> files = child.isDirectory() ? gatherFiles(child) : (hasAcceptedExtension(child) ? Set.of(child) : Set.of());
+                if (files.isEmpty()) {
+                    continue;
+                }
+                // A directory submission keeps its directory name; a single-file submission drops the file extension.
+                String name = child.isDirectory() ? child.getName() : stripExtension(child.getName());
+                AnalyzedSubmission submission = analyze(name, files, pdfTextDirectory);
+                if (submission.isEmpty()) {
+                    logger.warn("Submission '{}' contains no usable terms and is skipped.", child.getName());
+                } else {
+                    submissions.add(submission);
+                }
             }
-            // A directory submission keeps its directory name; a single-file submission drops the file extension.
-            String name = child.isDirectory() ? child.getName() : stripExtension(child.getName());
-            AnalyzedSubmission submission = analyze(name, files);
-            if (submission.isEmpty()) {
-                logger.warn("Submission '{}' contains no usable terms and is skipped.", child.getName());
-            } else {
-                submissions.add(submission);
-            }
+        } finally {
+            deleteRecursively(pdfTextDirectory);
         }
         return submissions;
     }
 
-    private AnalyzedSubmission analyze(String name, Set<File> files) throws ParsingException {
-        List<Token> tokens = parserAdapter.parse(files);
+    private AnalyzedSubmission analyze(String name, Set<File> files, Path pdfTextDirectory) throws ParsingException, IOException {
+        Set<File> textFiles = new HashSet<>();
+        for (File file : files) {
+            textFiles.add(isPdf(file) ? extractPdfToTextFile(file, pdfTextDirectory) : file);
+        }
+        List<Token> tokens = parserAdapter.parse(textFiles);
         Map<String, Integer> termFrequencies = new HashMap<>();
         for (Token token : tokens) {
             if (token.getType() != SharedTokenType.FILE_END) {
@@ -90,6 +103,31 @@ public class SubmissionReader {
             }
         }
         return new AnalyzedSubmission(name, termFrequencies);
+    }
+
+    private File extractPdfToTextFile(File pdfFile, Path pdfTextDirectory) throws IOException {
+        String text = PdfTextExtractor.extractText(pdfFile);
+        File textFile = Files.createTempFile(pdfTextDirectory, "pdf-", ".txt").toFile();
+        Files.writeString(textFile.toPath(), text);
+        return textFile;
+    }
+
+    private static boolean isPdf(File file) {
+        return file.getName().toLowerCase(Locale.ROOT).endsWith(PDF_EXTENSION);
+    }
+
+    private static void deleteRecursively(Path directory) throws IOException {
+        try (Stream<Path> paths = Files.walk(directory)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            });
+        } catch (UncheckedIOException exception) {
+            throw exception.getCause();
+        }
     }
 
     private Set<File> gatherFiles(File directory) throws IOException {

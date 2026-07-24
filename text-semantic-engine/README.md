@@ -40,7 +40,9 @@ submissions/
 └── carol.txt
 ```
 
-Accepted extensions default to the text module's (`.txt`, `.md`, `.tex`, `.csv`, `.json`, `.yaml`, `.xml`, …); override with `--extensions`.
+Accepted extensions default to the text module's (`.txt`, `.md`, `.tex`, `.csv`, `.json`, `.yaml`, `.xml`, …) **plus `.pdf`**; override with `--extensions`.
+
+**PDF support:** unlike the core JPlag `text` module (which reads only plain text), this engine ingests `.pdf` files directly — text is extracted on the fly with Apache PDFBox, so no manual `pdftotext` step is needed.
 
 ## Usage
 
@@ -59,6 +61,7 @@ mvn -pl text-semantic-engine exec:java \
 | `-t`, `--threshold <0-1>` | `0.5` | Minimum cosine similarity for a pair to be reported. |
 | `--top-terms <n>` | `10` | Number of explanatory shared terms per reported pair. |
 | `-o`, `--output <dir>` | (console only) | Directory to write `semantic-results.json` and `semantic-results.csv`. |
+| `--jplag-report <file>` | (none) | Write a `.jplag` archive that opens in the JPlag report viewer. |
 | `--[no-]lemmatize` | on | Reduce words to their WordNet base form. |
 | `--[no-]remove-stopwords` | on | Drop English stop words. |
 | `--[no-]expand-synonyms` | on | Canonicalize synonyms via WordNet. |
@@ -100,6 +103,19 @@ The paraphrase pair is flagged; the unrelated document is correctly excluded. GS
 first_submission,second_submission,similarity,top_shared_terms
 student_a,student_b,0.3819,repeatedly comparison large quickly list array until order
 ```
+
+## Viewing results in the JPlag report viewer
+
+Pass `--jplag-report <file>.jplag` to emit a report archive in JPlag's native format, then open it in the [JPlag report viewer](https://jplag.github.io/JPlag/):
+
+```bash
+mvn -pl text-semantic-engine exec:java \
+  -Dexec.args="/path/to/submissions --threshold 0.3 --jplag-report results.jplag"
+```
+
+The engine's cosine score is written into the `AVG` metric, which the viewer sorts and displays by default, so you get the ranked pair list and scores in the familiar UI. It reuses JPlag's own `ZipWriter` and report DTO records ([`JPlagReportWriter`](src/main/java/de/jplag/text/semantic/JPlagReportWriter.java)) so the archive stays format-compatible (report version ≥ 6.2.0).
+
+**Note:** because this engine produces document-level similarities rather than token matches, comparisons are written with an empty `matches` array — the viewer shows the pairs and scores but no in-text highlighting. Use the JSON/CSV output (`-o`) for the explanatory top shared terms.
 
 ## Using it as a library
 

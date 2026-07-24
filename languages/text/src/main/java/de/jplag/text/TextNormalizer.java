@@ -112,6 +112,10 @@ public class TextNormalizer {
      * {@link #POS_LOOKUP_ORDER}.
      */
     private IndexWord lookup(String word) {
+        // Skip single characters: initials like "T." or "C." otherwise map to unrelated synsets (thymine, celsius, ...).
+        if (word.length() < 2) {
+            return null;
+        }
         for (POS pos : POS_LOOKUP_ORDER) {
             try {
                 IndexWord indexWord = dictionary.lookupIndexWord(pos, word);

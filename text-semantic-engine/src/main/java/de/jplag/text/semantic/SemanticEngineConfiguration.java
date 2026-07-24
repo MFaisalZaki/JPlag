@@ -1,5 +1,6 @@
 package de.jplag.text.semantic;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import de.jplag.options.LanguageOption;
@@ -83,9 +84,18 @@ public class SemanticEngineConfiguration {
         private boolean lemmatize = true;
         private boolean removeStopwords = true;
         private boolean expandSynonyms = true;
-        private List<String> fileExtensions = new NaturalLanguage().fileExtensions();
+        private List<String> fileExtensions = defaultFileExtensions();
         private double similarityThreshold = 0.5;
         private int topSharedTermCount = 10;
+
+        /**
+         * @return the text module's extensions plus {@code .pdf}, which the engine extracts text from directly.
+         */
+        private static List<String> defaultFileExtensions() {
+            List<String> extensions = new ArrayList<>(new NaturalLanguage().fileExtensions());
+            extensions.add(".pdf");
+            return extensions;
+        }
 
         /**
          * @param value whether to reduce words to their WordNet base form.

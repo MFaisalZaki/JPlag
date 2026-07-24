@@ -19,6 +19,11 @@
             <groupId>de.jplag</groupId>
             <artifactId>text</artifactId>
         </dependency>
+        <!-- Reused for the report format: ZipWriter and the report DTO records, so output opens in the JPlag report viewer. -->
+        <dependency>
+            <groupId>de.jplag</groupId>
+            <artifactId>jplag</artifactId>
+        </dependency>
         <dependency>
             <groupId>de.jplag</groupId>
             <artifactId>language-api</artifactId>
@@ -28,6 +33,12 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Text extraction from PDF submissions. -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
         </dependency>
 
         <!-- Command line interface. -->
