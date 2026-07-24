@@ -1,0 +1,192 @@
+package de.jplag.text.semantic;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
+
+/**
+ * Generates a self-contained, Turnitin-style HTML "originality report" for a query document.
+ * <p>
+ * Every sentence of the query is aligned (by SBERT embedding cosine) to the most similar sentence across a set of
+ * candidate source documents. Sentences whose best match reaches the threshold are highlighted inline and attributed to
+ * that source. The report shows an overall similarity score (share of matched words), a ranked list of sources with
+ * their contribution, and the query text with matched sentences colour-coded by source.
+ */
+public class OriginalityReportGenerator {
+
+    /** Highlight colours assigned to sources by descending contribution. */
+    private static final String[] PALETTE = {"#fff3a3", "#ffccbc", "#b3e5fc", "#c8e6c9", "#e1bee7", "#f8bbd0", "#d7ccc8", "#cfd8dc"};
+
+    private final double matchThreshold;
+    private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
+
+    /**
+     * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.7).
+     * @param sentenceEmbedder splits a text into sentences and embeds them (e.g.
+     * {@code SbertEmbedder::embedSentencesWithText}).
+     */
+    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder) {
+        this.matchThreshold = matchThreshold;
+        this.sentenceEmbedder = sentenceEmbedder;
+    }
+
+    private record SourceDocument(String id, List<EmbeddedSentence> sentences) {
+    }
+
+    private record Attribution(String text, String sourceId, String sourceSentence, double score, boolean matched) {
+    }
+
+    /**
+     * Generates the HTML report.
+     * @param queryId the query document's name.
+     * @param queryText the query document's text.
+     * @param sources the candidate source documents to attribute matches to.
+     * @return a complete, self-contained HTML document.
+     */
+    public String generate(String queryId, String queryText, List<ArchivedDocument> sources) {
+        List<EmbeddedSentence> querySentences = sentenceEmbedder.apply(queryText);
+        List<SourceDocument> sourceDocuments = new ArrayList<>();
+        for (ArchivedDocument source : sources) {
+            sourceDocuments.add(new SourceDocument(source.id(), sentenceEmbedder.apply(source.text())));
+        }
+
+        List<Attribution> attributions = attribute(querySentences, sourceDocuments);
+
+        int totalWords = querySentences.stream().mapToInt(sentence -> wordCount(sentence.text())).sum();
+        Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
+        int matchedWords = 0;
+        for (Attribution attribution : attributions) {
+            if (attribution.matched()) {
+                int words = wordCount(attribution.text());
+                matchedWords += words;
+                wordsPerSource.merge(attribution.sourceId(), words, Integer::sum);
+            }
+        }
+        double overallPercent = totalWords == 0 ? 0.0 : 100.0 * matchedWords / totalWords;
+
+        List<String> orderedSources = wordsPerSource.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .map(Map.Entry::getKey).toList();
+        Map<String, String> colourOf = new HashMap<>();
+        Map<String, Integer> rankOf = new HashMap<>();
+        for (int i = 0; i < orderedSources.size(); i++) {
+            colourOf.put(orderedSources.get(i), PALETTE[i % PALETTE.length]);
+            rankOf.put(orderedSources.get(i), i + 1);
+        }
+
+        return renderHtml(queryId, overallPercent, attributions, orderedSources, wordsPerSource, totalWords, colourOf, rankOf);
+    }
+
+    private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources) {
+        List<Attribution> attributions = new ArrayList<>();
+        for (EmbeddedSentence querySentence : querySentences) {
+            double bestScore = -1.0;
+            String bestSource = null;
+            String bestSentence = null;
+            for (SourceDocument source : sources) {
+                for (EmbeddedSentence candidate : source.sentences()) {
+                    double similarity = SbertBackend.cosine(querySentence.vector(), candidate.vector());
+                    if (similarity > bestScore) {
+                        bestScore = similarity;
+                        bestSource = source.id();
+                        bestSentence = candidate.text();
+                    }
+                }
+            }
+            boolean matched = bestSource != null && bestScore >= matchThreshold;
+            attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestScore, matched));
+        }
+        return attributions;
+    }
+
+    private String renderHtml(String queryId, double overallPercent, List<Attribution> attributions, List<String> orderedSources,
+            Map<String, Integer> wordsPerSource, int totalWords, Map<String, String> colourOf, Map<String, Integer> rankOf) {
+        StringBuilder html = new StringBuilder();
+        html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+        html.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+        html.append("<title>Originality report - ").append(escape(queryId)).append("</title>");
+        html.append("<style>").append(css()).append("</style></head><body>");
+
+        html.append("<header><div class=\"title\">Originality Report</div><div class=\"subtitle\">").append(escape(queryId)).append("</div>");
+        html.append("<div class=\"score\" style=\"--c:").append(scoreColour(overallPercent)).append("\">")
+                .append(String.format(Locale.ROOT, "%.0f%%", overallPercent)).append("<span>similarity</span></div></header>");
+
+        html.append("<div class=\"layout\"><main>");
+        for (Attribution attribution : attributions) {
+            if (attribution.matched()) {
+                html.append("<span class=\"match\" style=\"background:").append(colourOf.get(attribution.sourceId())).append("\" title=\"")
+                        .append(escape(tooltip(attribution, rankOf.get(attribution.sourceId())))).append("\">").append(escape(attribution.text()))
+                        .append("<sup>").append(rankOf.get(attribution.sourceId())).append("</sup></span> ");
+            } else {
+                html.append("<span>").append(escape(attribution.text())).append("</span> ");
+            }
+        }
+        html.append("</main><aside><h2>Match Overview</h2>");
+        if (orderedSources.isEmpty()) {
+            html.append("<p class=\"none\">No matching sources found.</p>");
+        }
+        for (String source : orderedSources) {
+            double percent = totalWords == 0 ? 0.0 : 100.0 * wordsPerSource.get(source) / totalWords;
+            html.append("<div class=\"source\"><span class=\"swatch\" style=\"background:").append(colourOf.get(source)).append("\">")
+                    .append(rankOf.get(source)).append("</span><span class=\"sid\">").append(escape(source)).append("</span>")
+                    .append("<span class=\"pct\">").append(String.format(Locale.ROOT, "%.0f%%", percent)).append("</span></div>");
+        }
+        html.append("</aside></div>");
+        html.append("<footer>Generated by the JPlag semantic text engine. Similarity = share of words in sentences whose meaning matches an "
+                + "archived source (SBERT sentence alignment, threshold ").append(String.format(Locale.ROOT, "%.2f", matchThreshold))
+                .append("). Not a verbatim-copy measure.</footer>");
+        html.append("</body></html>");
+        return html.toString();
+    }
+
+    private static String tooltip(Attribution attribution, int rank) {
+        String excerpt = attribution.sourceSentence() == null ? "" : attribution.sourceSentence();
+        if (excerpt.length() > 160) {
+            excerpt = excerpt.substring(0, 160) + "...";
+        }
+        return String.format(Locale.ROOT, "Match %d - %s (%.0f%% similar): %s", rank, attribution.sourceId(), attribution.score() * 100, excerpt);
+    }
+
+    private static int wordCount(String text) {
+        String trimmed = text.trim();
+        return trimmed.isEmpty() ? 0 : trimmed.split("\\s+").length;
+    }
+
+    private static String scoreColour(double percent) {
+        if (percent >= 40) {
+            return "#d32f2f";
+        }
+        if (percent >= 20) {
+            return "#f57c00";
+        }
+        if (percent >= 5) {
+            return "#fbc02d";
+        }
+        return "#388e3c";
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
+    private static String css() {
+        return "*{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222;"
+                + "background:#f5f5f5}header{display:flex;align-items:center;gap:16px;padding:18px 28px;background:#fff;border-bottom:1px solid #e0e0e0}"
+                + ".title{font-size:20px;font-weight:700}.subtitle{color:#666;flex:1}"
+                + ".score{margin-left:auto;width:92px;height:92px;border-radius:50%;border:6px solid var(--c);color:var(--c);display:flex;"
+                + "flex-direction:column;align-items:center;justify-content:center;font-size:26px;font-weight:700}"
+                + ".score span{font-size:11px;color:#888;font-weight:600;text-transform:uppercase}"
+                + ".layout{display:flex;gap:20px;max-width:1100px;margin:24px auto;padding:0 20px;align-items:flex-start}"
+                + "main{flex:1;background:#fff;padding:28px 32px;border-radius:8px;line-height:2;font-size:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
+                + ".match{border-radius:3px;padding:1px 2px;cursor:help}.match sup{font-size:10px;font-weight:700;color:#555;margin-left:1px}"
+                + "aside{width:280px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:sticky;top:20px}"
+                + "aside h2{font-size:13px;text-transform:uppercase;color:#888;margin:0 0 14px}"
+                + ".source{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}"
+                + ".swatch{width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;"
+                + "font-weight:700;color:#444}.sid{flex:1;font-size:14px;word-break:break-word}.pct{font-weight:700}"
+                + ".none{color:#888}footer{max-width:1100px;margin:8px auto 40px;padding:0 20px;color:#999;font-size:12px}";
+    }
+}

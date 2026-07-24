@@ -13,6 +13,7 @@ import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KnnFloatVectorField;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
@@ -48,6 +49,7 @@ public class LuceneCorpusIndex {
     private static final String FIELD_ID = "id";
     private static final String FIELD_TERMS = "terms";
     private static final String FIELD_VECTOR = "vector";
+    private static final String FIELD_TEXT = "text";
     /** Cap on distinct query terms, kept under Lucene's default BooleanQuery clause limit. */
     private static final int MAX_QUERY_TERMS = 1000;
     /** Reciprocal-rank-fusion constant (dampens the influence of low ranks); 60 is the conventional value. */
@@ -86,6 +88,7 @@ public class LuceneCorpusIndex {
         Document document = new Document();
         document.add(new StringField(FIELD_ID, submission.name(), Field.Store.YES));
         document.add(new TextField(FIELD_TERMS, expandTerms(submission.termFrequencies()), Field.Store.NO));
+        document.add(new StoredField(FIELD_TEXT, submission.text()));
         float[] embedding = embedder.embed(submission.text());
         if (isNonZero(embedding)) { // Lucene cosine vectors must be non-zero
             document.add(new KnnFloatVectorField(FIELD_VECTOR, embedding, VectorSimilarityFunction.COSINE));
@@ -111,6 +114,28 @@ public class LuceneCorpusIndex {
                 case ENSEMBLE -> fuse(lexical(searcher, query, candidates), semantic(searcher, query, candidates), topK, query.name());
             };
         }
+    }
+
+    /**
+     * Retrieves the stored text of the given documents (for showing/aligning matched passages in a report).
+     * @param ids the document ids to fetch.
+     * @return the archived documents that exist, with their stored text, in the order requested.
+     * @throws IOException if reading the index fails.
+     */
+    public List<ArchivedDocument> documents(List<String> ids) throws IOException {
+        List<ArchivedDocument> documents = new ArrayList<>();
+        try (Directory directory = FSDirectory.open(indexDirectory); DirectoryReader reader = DirectoryReader.open(directory)) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            StoredFields storedFields = searcher.storedFields();
+            for (String id : ids) {
+                TopDocs topDocs = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
+                if (topDocs.scoreDocs.length > 0) {
+                    String text = storedFields.document(topDocs.scoreDocs[0].doc).get(FIELD_TEXT);
+                    documents.add(new ArchivedDocument(id, text == null ? "" : text));
+                }
+            }
+        }
+        return documents;
     }
 
     private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK) throws IOException {

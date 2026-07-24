@@ -99,23 +99,47 @@ public class CorpusCli implements Runnable {
         @Option(names = "--top-k", defaultValue = "10", description = "Number of matches to report per query document. Default: ${DEFAULT-VALUE}.")
         private int topK;
 
+        @Option(names = "--html-report", description = "Directory to write a Turnitin-style HTML originality report per query "
+                + "document (highlighted matches + sources + overall score). Requires SBERT.")
+        private File htmlReportDirectory;
+
+        @Option(names = "--sentence-threshold", defaultValue = "0.7", description = "Sentence cosine similarity to count as a "
+                + "match in the HTML report. Default: ${DEFAULT-VALUE}.")
+        private double sentenceThreshold;
+
         @Override
         public Integer call() throws Exception {
             SemanticEngineConfiguration configuration = defaultConfiguration();
             List<AnalyzedSubmission> queries = new SubmissionReader(configuration).readSubmissions(queryDocuments);
-            boolean needsEmbedder = backend != Backend.TFIDF;
+            boolean needsSbert = backend != Backend.TFIDF || htmlReportDirectory != null;
             Path indexPath = indexDirectory.toPath();
-            try (DocumentEmbedder embedder = needsEmbedder ? new SbertEmbedder() : noEmbedder()) {
+            SbertEmbedder sbert = needsSbert ? new SbertEmbedder() : null;
+            try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexPath, embedder);
+                OriginalityReportGenerator reportGenerator = sbert == null ? null
+                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText);
                 for (AnalyzedSubmission query : queries) {
                     List<CorpusMatch> matches = index.query(query, backend, topK);
                     System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);
                     for (CorpusMatch match : matches) {
                         System.out.printf("  %.4f  %s%n", match.score(), match.documentId());
                     }
+                    if (reportGenerator != null && htmlReportDirectory != null) {
+                        writeHtmlReport(index, reportGenerator, query, matches);
+                    }
                 }
             }
             return 0;
+        }
+
+        private void writeHtmlReport(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query,
+                List<CorpusMatch> matches) throws java.io.IOException {
+            List<ArchivedDocument> sources = index.documents(matches.stream().map(CorpusMatch::documentId).toList());
+            String html = generator.generate(query.name(), query.text(), sources);
+            java.nio.file.Files.createDirectories(htmlReportDirectory.toPath());
+            java.nio.file.Path output = htmlReportDirectory.toPath().resolve(query.name() + ".html");
+            java.nio.file.Files.writeString(output, html);
+            System.out.printf("  -> HTML report: %s%n", output.toAbsolutePath());
         }
     }
 

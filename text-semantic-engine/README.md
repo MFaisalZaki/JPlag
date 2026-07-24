@@ -158,6 +158,24 @@ Options: `--backend TFIDF|SBERT|ENSEMBLE` (BM25 / vector / RRF of both), `--top-
 
 Scale notes: doc-level embeddings (one vector per document) keep the vector index tractable at 100k–1M+ docs; retrieval is two-stage (cheap BM25/ANN candidates). Indexing currently reads a directory batch into memory — for very large archives, add in batches (each `index` call appends). A future refinement is re-ranking the top candidates with the full sentence-alignment scorer.
 
+## Turnitin-style originality reports
+
+When querying the corpus, add `--html-report <dir>` to produce a self-contained, **Turnitin-style HTML originality report** per query document:
+
+```bash
+mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.CorpusCli \
+  -Dexec.args="query --index /path/to/index --query /path/to/new-docs --top-k 3 --html-report /path/to/reports --sentence-threshold 0.7"
+```
+
+Each report shows:
+- an **overall similarity score** (share of the query's words in sentences that match an archived source),
+- a **ranked list of sources** with their contribution percentage,
+- the **query text with matched sentences highlighted** inline, colour-coded by source; hovering a highlight shows the matched source sentence and its similarity.
+
+It works at the **sentence** level via SBERT alignment (`--sentence-threshold` controls the cutoff), so it highlights *paraphrased* sentences, not only verbatim copies. Each query sentence is attributed to its single best-matching source, so identical sources are not double-counted. Requires the SBERT model (downloaded on first use); the report is a standalone `.html` file you open in any browser.
+
+Example (essay3, a paraphrase of essay1, cross-referenced against the archive): 54% similarity, with 42% attributed to `essay1_original`.
+
 ## Using it as a library
 
 ```java

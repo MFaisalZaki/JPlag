@@ -69,6 +69,27 @@ public class SbertEmbedder implements DocumentEmbedder {
         return vectors;
     }
 
+    /**
+     * Embeds every sentence of the text, keeping the sentence text alongside its vector.
+     * @param text the document text.
+     * @return the embedded sentences.
+     * @throws IllegalStateException if embedding fails.
+     */
+    public List<EmbeddedSentence> embedSentencesWithText(String text) {
+        List<EmbeddedSentence> sentences = new ArrayList<>();
+        CoreDocument document = sentencePipeline.processToCoreDocument(text);
+        for (CoreSentence sentence : document.sentences()) {
+            if (sentence.tokens().size() >= MINIMUM_SENTENCE_TOKENS) {
+                try {
+                    sentences.add(new EmbeddedSentence(sentence.text(), SbertBackend.normalize(predictor.predict(sentence.text()))));
+                } catch (Exception exception) {
+                    throw new IllegalStateException("SBERT embedding failed.", exception);
+                }
+            }
+        }
+        return sentences;
+    }
+
     @Override
     public float[] embed(String text) {
         List<float[]> sentences = embedSentences(text);
