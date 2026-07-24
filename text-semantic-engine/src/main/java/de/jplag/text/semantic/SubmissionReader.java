@@ -24,6 +24,7 @@ import de.jplag.ParsingException;
 import de.jplag.SharedTokenType;
 import de.jplag.Token;
 import de.jplag.text.ParserAdapter;
+import de.jplag.util.FileUtils;
 
 /**
  * Reads submissions from a root directory and turns each into an {@link AnalyzedSubmission} (a bag of normalized
@@ -102,7 +103,11 @@ public class SubmissionReader {
                 termFrequencies.merge(token.getType().getDescription(), 1, Integer::sum);
             }
         }
-        return new AnalyzedSubmission(name, termFrequencies);
+        StringBuilder text = new StringBuilder();
+        for (File textFile : textFiles) {
+            text.append(FileUtils.readFileContent(textFile)).append('\n');
+        }
+        return new AnalyzedSubmission(name, termFrequencies, text.toString());
     }
 
     private File extractPdfToTextFile(File pdfFile, Path pdfTextDirectory) throws IOException {

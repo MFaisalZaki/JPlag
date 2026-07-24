@@ -34,6 +34,10 @@ public class SemanticEngineCli implements Callable<Integer> {
     @Option(names = "--top-terms", defaultValue = "10", description = "Number of top shared terms to report per pair. Default: ${DEFAULT-VALUE}.")
     private int topTerms;
 
+    @Option(names = "--backend", defaultValue = "TFIDF", description = "Similarity backend: ${COMPLETION-CANDIDATES}. "
+            + "TFIDF is lexical and fast; SBERT is neural and downloads a model on first use. Default: ${DEFAULT-VALUE}.")
+    private SemanticEngineConfiguration.Backend backend;
+
     @Option(names = {"-o", "--output"}, description = "Directory for the JSON/CSV reports. Console only if omitted.")
     private File outputDirectory;
 
@@ -55,7 +59,7 @@ public class SemanticEngineCli implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         SemanticEngineConfiguration.Builder builder = SemanticEngineConfiguration.builder().similarityThreshold(threshold)
-                .topSharedTermCount(topTerms).lemmatize(lemmatize).removeStopwords(removeStopwords).expandSynonyms(expandSynonyms);
+                .topSharedTermCount(topTerms).lemmatize(lemmatize).removeStopwords(removeStopwords).expandSynonyms(expandSynonyms).backend(backend);
         if (extensions != null && !extensions.isEmpty()) {
             builder.fileExtensions(extensions);
         }
@@ -67,7 +71,7 @@ public class SemanticEngineCli implements Callable<Integer> {
             return 1;
         }
 
-        List<SubmissionPairSimilarity> results = new SemanticComparisonEngine(configuration).compare(submissions);
+        List<SubmissionPairSimilarity> results = configuration.createBackend().compare(submissions);
         printSummary(submissions.size(), results);
 
         if (outputDirectory != null) {

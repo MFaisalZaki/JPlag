@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
  * all pairs by cosine similarity. Because the vectors are bags of normalized terms, similarity is independent of word
  * order, so paraphrases that reorder or restructure content are still detected.
  */
-public class SemanticComparisonEngine {
+public class SemanticComparisonEngine implements SimilarityBackend {
 
     private static final Logger logger = LoggerFactory.getLogger(SemanticComparisonEngine.class);
 
@@ -26,11 +26,7 @@ public class SemanticComparisonEngine {
         this.configuration = configuration;
     }
 
-    /**
-     * Compares all submission pairs and returns those reaching the configured similarity threshold, most similar first.
-     * @param submissions the analyzed submissions.
-     * @return the reported pair similarities, sorted by descending similarity.
-     */
+    @Override
     public List<SubmissionPairSimilarity> compare(List<AnalyzedSubmission> submissions) {
         TfIdfVectorizer vectorizer = new TfIdfVectorizer(submissions);
         List<SparseVector> vectors = submissions.stream().map(vectorizer::vectorize).toList();

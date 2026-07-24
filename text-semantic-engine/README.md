@@ -27,6 +27,23 @@ submissions ──▶ tokenize + normalize ──▶ TF-IDF vectors ──▶ al
 3. **Vectorize** — sub-linear TF × smoothed IDF, L2-normalized ([`TfIdfVectorizer`](src/main/java/de/jplag/text/semantic/TfIdfVectorizer.java)).
 4. **Compare** — cosine similarity for every pair; report those at/above the threshold, ranked, each with the **top shared terms** that explain the score.
 
+## Backends
+
+The engine has two interchangeable similarity backends (`--backend`):
+
+| Backend | How it compares | Catches | Cost |
+|---|---|---|---|
+| **TFIDF** (default) | lexical: TF-IDF cosine over WordNet-normalized terms | reordering + synonyms + inflection | pure JVM, instant |
+| **SBERT** | semantic: local sentence embeddings (all-MiniLM-L6-v2), compared by passage alignment | the above **plus** rewrites that share meaning without sharing vocabulary | downloads a model + PyTorch runtime (~a few hundred MB) on first use; slower |
+
+The **SBERT** backend splits each document into sentences (CoreNLP `ssplit`), embeds each sentence locally, and scores a pair by *soft passage alignment* — each sentence's best-matching counterpart in the other document, averaged symmetrically (which, unlike mean-pooling, does not wash out on long documents). The model and PyTorch native runtime are fetched automatically by [Deep Java Library](https://djl.ai/) the first time you run it. SBERT produces document-level scores rather than token matches, so it does not emit shared-term explanations.
+
+Which to use: **TFIDF** is the strong, cheap default and wins when paraphrases keep vocabulary. Reach for **SBERT** when you expect genuine rewording where lexical overlap collapses. Example:
+
+```bash
+mvn -pl text-semantic-engine exec:java -Dexec.args="/path/to/submissions --backend SBERT --threshold 0.4"
+```
+
 ## Input layout
 
 Point the engine at a directory whose children are the submissions:
@@ -58,7 +75,8 @@ mvn -pl text-semantic-engine exec:java \
 | Option | Default | Description |
 |---|---|---|
 | `<directory>` | (required) | Root directory containing the submissions. |
-| `-t`, `--threshold <0-1>` | `0.5` | Minimum cosine similarity for a pair to be reported. |
+| `--backend <TFIDF\|SBERT>` | `TFIDF` | Similarity backend (see below). |
+| `-t`, `--threshold <0-1>` | `0.5` | Minimum similarity for a pair to be reported. |
 | `--top-terms <n>` | `10` | Number of explanatory shared terms per reported pair. |
 | `-o`, `--output <dir>` | (console only) | Directory to write `semantic-results.json` and `semantic-results.csv`. |
 | `--jplag-report <file>` | (none) | Write a `.jplag` archive that opens in the JPlag report viewer. |
@@ -122,11 +140,13 @@ The engine's cosine score is written into the `AVG` metric, which the viewer sor
 ```java
 SemanticEngineConfiguration configuration = SemanticEngineConfiguration.builder()
         .similarityThreshold(0.5)
+        .backend(SemanticEngineConfiguration.Backend.SBERT)   // or TFIDF (default)
         .expandSynonyms(true)   // .lemmatize(...), .removeStopwords(...), .fileExtensions(...)
         .build();
 
 List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readSubmissions(rootDirectory);
-List<SubmissionPairSimilarity> results = new SemanticComparisonEngine(configuration).compare(submissions);
+SimilarityBackend backend = configuration.createBackend();
+List<SubmissionPairSimilarity> results = backend.compare(submissions);
 ```
 
 ## Limitations

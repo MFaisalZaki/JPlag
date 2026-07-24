@@ -80,6 +80,7 @@
         <version.assertj>3.27.7</version.assertj>
         <version.auto-service>1.1.1</version.auto-service>
         <version.corenlp>4.5.10</version.corenlp>
+        <version.djl>0.30.0</version.djl>
         <version.eclipse.core>3.23.100</version.eclipse.core>
         <version.extjwnl>2.0.5</version.extjwnl>
         <version.extjwnl.data>1.2</version.extjwnl.data>
@@ -133,6 +134,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Deep Java Library BOM: aligns versions of all DJL artifacts (used by the SBERT backend). -->
+            <dependency>
+                <groupId>ai.djl</groupId>
+                <artifactId>bom</artifactId>
+                <version>${version.djl}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <dependency>
                 <groupId>org.kohsuke.metainf-services</groupId>
                 <artifactId>metainf-services</artifactId>

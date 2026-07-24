@@ -41,6 +41,22 @@
             <artifactId>pdfbox</artifactId>
         </dependency>
 
+        <!-- Local SBERT sentence embeddings for the SBERT backend (Deep Java Library). -->
+        <!-- The PyTorch native runtime and the model are fetched automatically by DJL on first use. -->
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.pytorch</groupId>
+            <artifactId>pytorch-engine</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Command line interface. -->
         <dependency>
             <groupId>info.picocli</groupId>

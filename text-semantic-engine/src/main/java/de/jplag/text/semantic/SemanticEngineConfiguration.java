@@ -14,16 +14,28 @@ import de.jplag.text.TextLanguageOptions;
  */
 public class SemanticEngineConfiguration {
 
+    /**
+     * The similarity backend to use.
+     */
+    public enum Backend {
+        /** Lexical TF-IDF cosine over WordNet-normalized terms (fast, pure JVM, order-independent). */
+        TFIDF,
+        /** Neural SBERT sentence embeddings with passage alignment (semantic; downloads a model on first use). */
+        SBERT
+    }
+
     private final TextLanguageOptions normalizationOptions;
     private final List<String> fileExtensions;
     private final double similarityThreshold;
     private final int topSharedTermCount;
+    private final Backend backend;
 
     private SemanticEngineConfiguration(Builder builder) {
         this.normalizationOptions = buildNormalizationOptions(builder.lemmatize, builder.removeStopwords, builder.expandSynonyms);
         this.fileExtensions = List.copyOf(builder.fileExtensions);
         this.similarityThreshold = builder.similarityThreshold;
         this.topSharedTermCount = builder.topSharedTermCount;
+        this.backend = builder.backend;
     }
 
     private static TextLanguageOptions buildNormalizationOptions(boolean lemmatize, boolean removeStopwords, boolean expandSynonyms) {
@@ -71,6 +83,24 @@ public class SemanticEngineConfiguration {
     }
 
     /**
+     * @return the similarity backend to use.
+     */
+    public Backend backend() {
+        return backend;
+    }
+
+    /**
+     * Creates the configured similarity backend.
+     * @return a new backend instance.
+     */
+    public SimilarityBackend createBackend() {
+        return switch (backend) {
+            case TFIDF -> new SemanticComparisonEngine(this);
+            case SBERT -> new SbertBackend(this);
+        };
+    }
+
+    /**
      * @return a builder with paraphrase-oriented defaults (all normalization enabled, threshold 0.5).
      */
     public static Builder builder() {
@@ -87,6 +117,7 @@ public class SemanticEngineConfiguration {
         private List<String> fileExtensions = defaultFileExtensions();
         private double similarityThreshold = 0.5;
         private int topSharedTermCount = 10;
+        private Backend backend = Backend.TFIDF;
 
         /**
          * @return the text module's extensions plus {@code .pdf}, which the engine extracts text from directly.
@@ -148,6 +179,15 @@ public class SemanticEngineConfiguration {
          */
         public Builder topSharedTermCount(int count) {
             this.topSharedTermCount = count;
+            return this;
+        }
+
+        /**
+         * @param backend the similarity backend to use.
+         * @return this builder.
+         */
+        public Builder backend(Backend backend) {
+            this.backend = backend;
             return this;
         }
 
