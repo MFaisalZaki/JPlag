@@ -35,9 +35,12 @@ public class SemanticEngineCli implements Callable<Integer> {
     private int topTerms;
 
     @Option(names = "--backend", defaultValue = "TFIDF", description = "Similarity backend: ${COMPLETION-CANDIDATES}. "
-            + "TFIDF is lexical and fast; SBERT is neural (downloads a model on first use); ENSEMBLE takes the max of both. "
-            + "Default: ${DEFAULT-VALUE}.")
+            + "TFIDF is lexical and fast; SBERT is neural (downloads a model on first use); ENSEMBLE combines both. " + "Default: ${DEFAULT-VALUE}.")
     private SemanticEngineConfiguration.Backend backend;
+
+    @Option(names = "--ensemble-weight", description = "For --backend ENSEMBLE, weight on TFIDF in [0,1] for a weighted "
+            + "mean (1=pure TFIDF, 0=pure SBERT). If unset, ENSEMBLE uses the max of both.")
+    private Double ensembleWeight;
 
     @Option(names = {"-o", "--output"}, description = "Directory for the JSON/CSV reports. Console only if omitted.")
     private File outputDirectory;
@@ -59,8 +62,13 @@ public class SemanticEngineCli implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        if (ensembleWeight != null && (ensembleWeight < 0.0 || ensembleWeight > 1.0)) {
+            logger.error("--ensemble-weight must be in [0, 1], was {}.", ensembleWeight);
+            return 1;
+        }
         SemanticEngineConfiguration.Builder builder = SemanticEngineConfiguration.builder().similarityThreshold(threshold)
-                .topSharedTermCount(topTerms).lemmatize(lemmatize).removeStopwords(removeStopwords).expandSynonyms(expandSynonyms).backend(backend);
+                .topSharedTermCount(topTerms).lemmatize(lemmatize).removeStopwords(removeStopwords).expandSynonyms(expandSynonyms).backend(backend)
+                .ensembleWeight(ensembleWeight);
         if (extensions != null && !extensions.isEmpty()) {
             builder.fileExtensions(extensions);
         }

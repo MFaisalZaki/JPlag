@@ -35,11 +35,13 @@ The engine has two interchangeable similarity backends (`--backend`):
 |---|---|---|---|
 | **TFIDF** (default) | lexical: TF-IDF cosine over WordNet-normalized terms | reordering + synonyms + inflection | pure JVM, instant |
 | **SBERT** | semantic: local sentence embeddings (all-MiniLM-L6-v2), compared by passage alignment | the above **plus** rewrites that share meaning without sharing vocabulary | downloads a model + PyTorch runtime (~a few hundred MB) on first use; slower |
-| **ENSEMBLE** | the **max** of the TFIDF and SBERT scores per pair | flags a pair if *either* signal is strong | runs both (so includes SBERT's cost) |
+| **ENSEMBLE** | the **max** of the TFIDF and SBERT scores per pair (or a weighted mean, see `--ensemble-weight`) | flags a pair if *either* signal is strong | runs both (so includes SBERT's cost) |
 
 The **SBERT** backend splits each document into sentences (CoreNLP `ssplit`), embeds each sentence locally, and scores a pair by *soft passage alignment* — each sentence's best-matching counterpart in the other document, averaged symmetrically (which, unlike mean-pooling, does not wash out on long documents). The model and PyTorch native runtime are fetched automatically by [Deep Java Library](https://djl.ai/) the first time you run it. SBERT produces document-level scores rather than token matches, so it does not emit shared-term explanations.
 
-Which to use: **TFIDF** is the strong, cheap default and wins when paraphrases keep vocabulary. Reach for **SBERT** when you expect genuine rewording where lexical overlap collapses, or **ENSEMBLE** to cover both threat models at once. (Note: because SBERT scores run higher than TF-IDF, the ensemble max often tracks the SBERT score, so it inherits SBERT's higher noise floor.) Example:
+Which to use: **TFIDF** is the strong, cheap default and wins when paraphrases keep vocabulary. Reach for **SBERT** when you expect genuine rewording where lexical overlap collapses, or **ENSEMBLE** to cover both threat models at once.
+
+By default ENSEMBLE combines by **maximum**. Because SBERT scores run higher than TF-IDF, that max often tracks the SBERT score (inheriting its higher noise floor). Pass **`--ensemble-weight <0..1>`** to combine by a weighted mean instead — `w * tfidf + (1 - w) * sbert`, where `1` is pure TF-IDF and `0` is pure SBERT. A weight leaning toward TF-IDF (e.g. `0.6`) pulls semantically-inflated scores on low-lexical-overlap pairs back down, trading coverage for a cleaner margin. Example:
 
 ```bash
 mvn -pl text-semantic-engine exec:java -Dexec.args="/path/to/submissions --backend SBERT --threshold 0.4"
