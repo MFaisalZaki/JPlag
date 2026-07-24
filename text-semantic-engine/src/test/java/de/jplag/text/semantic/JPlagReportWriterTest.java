@@ -67,6 +67,21 @@ class JPlagReportWriterTest {
             JsonNode distribution = readEntry(zip, "distribution.json");
             assertEquals(100, distribution.get("AVG").size());
             assertEquals(1, distribution.get("AVG").get(73).asInt(), "The 0.73 pair should fall in bucket 73");
+
+            // options.json must carry every field the viewer's CliOptions schema reads, or the overview/information
+            // views throw (e.g. `submissionDirectories.length` on an undefined value).
+            JsonNode options = readEntry(zip, "options.json");
+            for (String required : Set.of("language", "minimumTokenMatch", "submissionDirectories", "oldSubmissionDirectories",
+                    "baseCodeSubmissionDirectory", "subdirectoryName", "fileSuffixes", "exclusionFileName", "similarityMetric", "similarityThreshold",
+                    "maximumNumberOfComparisons", "clusteringOptions", "mergingOptions", "normalize", "analyzeComments")) {
+                assertTrue(options.has(required), "options.json is missing required field: " + required);
+            }
+            assertTrue(options.get("submissionDirectories").isArray(), "submissionDirectories must be an array");
+            assertTrue(options.get("oldSubmissionDirectories").isArray(), "oldSubmissionDirectories must be an array");
+            assertTrue(options.get("fileSuffixes").isArray(), "fileSuffixes must be an array");
+            assertTrue(options.get("clusteringOptions").has("enabled"), "clusteringOptions must expose enabled");
+            assertTrue(options.get("mergingOptions").has("enabled"), "mergingOptions must expose enabled");
+            assertEquals(1, options.get("maximumNumberOfComparisons").asInt(), "maximumNumberOfComparisons should match the pair count");
         }
     }
 }

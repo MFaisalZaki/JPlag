@@ -1,11 +1,14 @@
 package de.jplag.text.semantic;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -13,13 +16,12 @@ import java.util.function.Function;
  * <p>
  * Every sentence of the query is aligned (by SBERT embedding cosine) to the most similar sentence across a set of
  * candidate source documents. Sentences whose best match reaches the threshold are highlighted inline and attributed to
- * that source. The report shows an overall similarity score (share of matched words), a ranked list of sources with
- * their contribution, and the query text with matched sentences colour-coded by source.
+ * that source, and each match is <em>categorized</em> by its literal word overlap with the source sentence:
+ * {@link MatchCategory#COPY_PASTE}, {@link MatchCategory#LIGHTLY_EDITED}, or {@link MatchCategory#PARAPHRASE}. The
+ * report shows an overall similarity score, a breakdown by category, a ranked list of sources, and the query text with
+ * matched sentences colour-coded by category.
  */
 public class OriginalityReportGenerator {
-
-    /** Highlight colours assigned to sources by descending contribution. */
-    private static final String[] PALETTE = {"#fff3a3", "#ffccbc", "#b3e5fc", "#c8e6c9", "#e1bee7", "#f8bbd0", "#d7ccc8", "#cfd8dc"};
 
     private final double matchThreshold;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
@@ -37,7 +39,7 @@ public class OriginalityReportGenerator {
     private record SourceDocument(String id, List<EmbeddedSentence> sentences) {
     }
 
-    private record Attribution(String text, String sourceId, String sourceSentence, double score, boolean matched) {
+    private record Attribution(String text, String sourceId, String sourceSentence, double score, MatchCategory category, boolean matched) {
     }
 
     /**
@@ -58,26 +60,26 @@ public class OriginalityReportGenerator {
 
         int totalWords = querySentences.stream().mapToInt(sentence -> wordCount(sentence.text())).sum();
         Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
+        Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
         for (Attribution attribution : attributions) {
             if (attribution.matched()) {
                 int words = wordCount(attribution.text());
                 matchedWords += words;
                 wordsPerSource.merge(attribution.sourceId(), words, Integer::sum);
+                wordsPerCategory.merge(attribution.category(), words, Integer::sum);
             }
         }
         double overallPercent = totalWords == 0 ? 0.0 : 100.0 * matchedWords / totalWords;
 
         List<String> orderedSources = wordsPerSource.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .map(Map.Entry::getKey).toList();
-        Map<String, String> colourOf = new HashMap<>();
         Map<String, Integer> rankOf = new HashMap<>();
         for (int i = 0; i < orderedSources.size(); i++) {
-            colourOf.put(orderedSources.get(i), PALETTE[i % PALETTE.length]);
             rankOf.put(orderedSources.get(i), i + 1);
         }
 
-        return renderHtml(queryId, overallPercent, attributions, orderedSources, wordsPerSource, totalWords, colourOf, rankOf);
+        return renderHtml(queryId, overallPercent, attributions, orderedSources, wordsPerSource, wordsPerCategory, totalWords, rankOf);
     }
 
     private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources) {
@@ -97,13 +99,14 @@ public class OriginalityReportGenerator {
                 }
             }
             boolean matched = bestSource != null && bestScore >= matchThreshold;
-            attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestScore, matched));
+            MatchCategory category = matched ? MatchCategory.fromWordOverlap(wordOverlap(querySentence.text(), bestSentence)) : null;
+            attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestScore, category, matched));
         }
         return attributions;
     }
 
     private String renderHtml(String queryId, double overallPercent, List<Attribution> attributions, List<String> orderedSources,
-            Map<String, Integer> wordsPerSource, int totalWords, Map<String, String> colourOf, Map<String, Integer> rankOf) {
+            Map<String, Integer> wordsPerSource, Map<MatchCategory, Integer> wordsPerCategory, int totalWords, Map<String, Integer> rankOf) {
         StringBuilder html = new StringBuilder();
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
         html.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
@@ -114,30 +117,39 @@ public class OriginalityReportGenerator {
         html.append("<div class=\"score\" style=\"--c:").append(scoreColour(overallPercent)).append("\">")
                 .append(String.format(Locale.ROOT, "%.0f%%", overallPercent)).append("<span>similarity</span></div></header>");
 
+        html.append("<div class=\"legend\">");
+        for (MatchCategory category : MatchCategory.values()) {
+            int words = wordsPerCategory.getOrDefault(category, 0);
+            double percent = totalWords == 0 ? 0.0 : 100.0 * words / totalWords;
+            html.append("<span class=\"chip\"><span class=\"box\" style=\"background:").append(category.colour()).append("\"></span>")
+                    .append(escape(category.label())).append(" <b>").append(String.format(Locale.ROOT, "%.0f%%", percent)).append("</b></span>");
+        }
+        html.append("</div>");
+
         html.append("<div class=\"layout\"><main>");
         for (Attribution attribution : attributions) {
             if (attribution.matched()) {
-                html.append("<span class=\"match\" style=\"background:").append(colourOf.get(attribution.sourceId())).append("\" title=\"")
+                html.append("<span class=\"match\" style=\"background:").append(attribution.category().colour()).append("\" title=\"")
                         .append(escape(tooltip(attribution, rankOf.get(attribution.sourceId())))).append("\">").append(escape(attribution.text()))
                         .append("<sup>").append(rankOf.get(attribution.sourceId())).append("</sup></span> ");
             } else {
                 html.append("<span>").append(escape(attribution.text())).append("</span> ");
             }
         }
-        html.append("</main><aside><h2>Match Overview</h2>");
+        html.append("</main><aside><h2>Sources</h2>");
         if (orderedSources.isEmpty()) {
             html.append("<p class=\"none\">No matching sources found.</p>");
         }
         for (String source : orderedSources) {
             double percent = totalWords == 0 ? 0.0 : 100.0 * wordsPerSource.get(source) / totalWords;
-            html.append("<div class=\"source\"><span class=\"swatch\" style=\"background:").append(colourOf.get(source)).append("\">")
-                    .append(rankOf.get(source)).append("</span><span class=\"sid\">").append(escape(source)).append("</span>")
-                    .append("<span class=\"pct\">").append(String.format(Locale.ROOT, "%.0f%%", percent)).append("</span></div>");
+            html.append("<div class=\"source\"><span class=\"swatch\">").append(rankOf.get(source)).append("</span><span class=\"sid\">")
+                    .append(escape(source)).append("</span><span class=\"pct\">").append(String.format(Locale.ROOT, "%.0f%%", percent))
+                    .append("</span></div>");
         }
         html.append("</aside></div>");
-        html.append("<footer>Generated by the JPlag semantic text engine. Similarity = share of words in sentences whose meaning matches an "
-                + "archived source (SBERT sentence alignment, threshold ").append(String.format(Locale.ROOT, "%.2f", matchThreshold))
-                .append("). Not a verbatim-copy measure.</footer>");
+        html.append("<footer>Generated by the JPlag semantic text engine. A sentence is a match when its meaning matches an archived source "
+                + "(SBERT, threshold ").append(String.format(Locale.ROOT, "%.2f", matchThreshold))
+                .append("); the category comes from how much of the literal wording is shared.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -147,7 +159,32 @@ public class OriginalityReportGenerator {
         if (excerpt.length() > 160) {
             excerpt = excerpt.substring(0, 160) + "...";
         }
-        return String.format(Locale.ROOT, "Match %d - %s (%.0f%% similar): %s", rank, attribution.sourceId(), attribution.score() * 100, excerpt);
+        return String.format(Locale.ROOT, "%s - source %d %s (%.0f%% similar): %s", attribution.category().label(), rank, attribution.sourceId(),
+                attribution.score() * 100, excerpt);
+    }
+
+    /** Jaccard similarity of the two sentences' word sets, measuring literal word overlap. */
+    private static double wordOverlap(String first, String second) {
+        Set<String> a = words(first);
+        Set<String> b = words(second == null ? "" : second);
+        if (a.isEmpty() || b.isEmpty()) {
+            return 0.0;
+        }
+        Set<String> intersection = new HashSet<>(a);
+        intersection.retainAll(b);
+        Set<String> union = new HashSet<>(a);
+        union.addAll(b);
+        return (double) intersection.size() / union.size();
+    }
+
+    private static Set<String> words(String text) {
+        Set<String> words = new HashSet<>();
+        for (String token : text.toLowerCase(Locale.ROOT).split("[^a-z0-9]+")) {
+            if (!token.isEmpty()) {
+                words.add(token);
+            }
+        }
+        return words;
     }
 
     private static int wordCount(String text) {
@@ -179,14 +216,16 @@ public class OriginalityReportGenerator {
                 + ".score{margin-left:auto;width:92px;height:92px;border-radius:50%;border:6px solid var(--c);color:var(--c);display:flex;"
                 + "flex-direction:column;align-items:center;justify-content:center;font-size:26px;font-weight:700}"
                 + ".score span{font-size:11px;color:#888;font-weight:600;text-transform:uppercase}"
+                + ".legend{display:flex;gap:18px;flex-wrap:wrap;padding:12px 28px;background:#fafafa;border-bottom:1px solid #eee;font-size:13px}"
+                + ".chip{display:flex;align-items:center;gap:6px;color:#555}.chip .box{width:14px;height:14px;border-radius:3px;display:inline-block}"
                 + ".layout{display:flex;gap:20px;max-width:1100px;margin:24px auto;padding:0 20px;align-items:flex-start}"
                 + "main{flex:1;background:#fff;padding:28px 32px;border-radius:8px;line-height:2;font-size:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
                 + ".match{border-radius:3px;padding:1px 2px;cursor:help}.match sup{font-size:10px;font-weight:700;color:#555;margin-left:1px}"
                 + "aside{width:280px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:sticky;top:20px}"
                 + "aside h2{font-size:13px;text-transform:uppercase;color:#888;margin:0 0 14px}"
                 + ".source{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}"
-                + ".swatch{width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;"
-                + "font-weight:700;color:#444}.sid{flex:1;font-size:14px;word-break:break-word}.pct{font-weight:700}"
+                + ".swatch{width:22px;height:22px;border-radius:4px;background:#eee;display:flex;align-items:center;justify-content:center;"
+                + "font-size:12px;font-weight:700;color:#444}.sid{flex:1;font-size:14px;word-break:break-word}.pct{font-weight:700}"
                 + ".none{color:#888}footer{max-width:1100px;margin:8px auto 40px;padding:0 20px;color:#999;font-size:12px}";
     }
 }

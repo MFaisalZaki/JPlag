@@ -169,8 +169,11 @@ mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.C
 
 Each report shows:
 - an **overall similarity score** (share of the query's words in sentences that match an archived source),
+- a **category breakdown** — each match is classified by how much of the *literal wording* it shares with its source: **Copy-paste** (near-identical), **Lightly edited**, or **Paraphrase** (same meaning, different words),
 - a **ranked list of sources** with their contribution percentage,
-- the **query text with matched sentences highlighted** inline, colour-coded by source; hovering a highlight shows the matched source sentence and its similarity.
+- the **query text with matched sentences highlighted** inline, **colour-coded by category**; hovering a highlight shows the category, matched source, and its similarity.
+
+The category comes from combining the two signals the engine already has: every match has high *semantic* similarity (why it matched), and the *lexical* overlap (Jaccard of the sentences' words) then separates copied wording from genuine rewording. Example: essay3 (a paraphrase of essay1) scores 54% — 35% Paraphrase, 16% Lightly edited, 3% Copy-paste.
 
 It works at the **sentence** level via SBERT alignment (`--sentence-threshold` controls the cutoff), so it highlights *paraphrased* sentences, not only verbatim copies. Each query sentence is attributed to its single best-matching source, so identical sources are not double-counted. Requires the SBERT model (downloaded on first use); the report is a standalone `.html` file you open in any browser.
 

@@ -51,7 +51,7 @@ public class JPlagReportWriter {
         ZipWriter writer = new ZipWriter(reportFile);
         try {
             writer.addJsonEntry(runInformation(totalComparisons), Path.of("runInformation.json"));
-            writer.addJsonEntry(options(), Path.of("options.json"));
+            writer.addJsonEntry(options(results.size()), Path.of("options.json"));
             writer.addJsonEntry(List.of(), Path.of("cluster.json"));
             writer.addJsonEntry(distribution(results), Path.of("distribution.json"));
             writer.addJsonEntry(topComparisons(results), Path.of("topComparisons.json"));
@@ -71,15 +71,35 @@ public class JPlagReportWriter {
         return new RunInformation(ReportObjectFactory.REPORT_VIEWER_VERSION, List.of(), date, 0L, totalComparisons);
     }
 
-    private Map<String, Object> options() {
+    /**
+     * Builds the {@code options.json} content. The viewer's {@code CliOptions} schema declares a full set of run-option
+     * fields that the overview and information views read directly (calling {@code .length}, {@code .join},
+     * {@code .enabled} on them), so every field must be present. The document-level engine has no meaningful value for most
+     * of them, so they are emitted with empty/neutral defaults.
+     * @param comparisonCount number of reported pairs, used as the maximum comparison count so the "shown comparisons"
+     * figure reads sensibly.
+     */
+    private Map<String, Object> options(int comparisonCount) {
         Map<String, Object> clustering = new LinkedHashMap<>();
         clustering.put("enabled", false);
+        Map<String, Object> merging = new LinkedHashMap<>();
+        merging.put("enabled", false);
         Map<String, Object> options = new LinkedHashMap<>();
         options.put("language", "text");
-        options.put("similarityMetric", AVG);
         options.put("minimumTokenMatch", 0);
+        options.put("submissionDirectories", List.of());
+        options.put("oldSubmissionDirectories", List.of());
+        options.put("baseCodeSubmissionDirectory", "");
+        options.put("subdirectoryName", "");
+        options.put("fileSuffixes", List.of());
+        options.put("exclusionFileName", "");
+        options.put("similarityMetric", AVG);
+        options.put("similarityThreshold", 0.0);
+        options.put("maximumNumberOfComparisons", comparisonCount);
         options.put("clusteringOptions", clustering);
+        options.put("mergingOptions", merging);
         options.put("normalize", false);
+        options.put("analyzeComments", false);
         return options;
     }
 
