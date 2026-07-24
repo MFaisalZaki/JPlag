@@ -173,13 +173,8 @@ public class OriginalityReportGenerator {
         html.append("<title>Originality report - ").append(escape(queryId)).append("</title>");
         html.append("<style>").append(css()).append("</style></head><body>");
 
-        html.append("<header><div><div class=\"title\">Originality Report</div><div class=\"subtitle\">").append(escape(queryId))
-                .append("</div></div><div class=\"badges\">");
-        html.append(badge(totals.overallPercent(), scoreColour(totals.overallPercent()), excludeAttributed ? "unattributed" : "similarity"));
-        if (!excludeAttributed) {
-            html.append(badge(totals.unattributedPercent(), "#d32f2f", "unattributed"));
-        }
-        html.append("</div></header>");
+        html.append("<header><div class=\"title\">Originality Report</div><div class=\"subtitle\">").append(escape(queryId))
+                .append("</div></header>");
 
         html.append("<div class=\"legend\"><span class=\"grp\">Type:</span>");
         for (MatchCategory category : MatchCategory.values()) {
@@ -228,10 +223,6 @@ public class OriginalityReportGenerator {
                 .append("); the type comes from literal word overlap.</footer>");
         html.append("</body></html>");
         return html.toString();
-    }
-
-    private static String badge(double percent, String colour, String label) {
-        return "<div class=\"score\" style=\"--c:" + colour + "\">" + format(percent) + "<span>" + label + "</span></div>";
     }
 
     private static String chip(String colour, String label, double percent) {
@@ -289,19 +280,6 @@ public class OriginalityReportGenerator {
         return String.format(Locale.ROOT, "%.0f%%", percent);
     }
 
-    private static String scoreColour(double percent) {
-        if (percent >= 40) {
-            return "#d32f2f";
-        }
-        if (percent >= 20) {
-            return "#f57c00";
-        }
-        if (percent >= 5) {
-            return "#fbc02d";
-        }
-        return "#388e3c";
-    }
-
     private static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
@@ -309,10 +287,7 @@ public class OriginalityReportGenerator {
     private static String css() {
         return "*{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222;"
                 + "background:#f5f5f5}header{display:flex;align-items:center;gap:16px;padding:18px 28px;background:#fff;border-bottom:1px solid #e0e0e0}"
-                + ".title{font-size:20px;font-weight:700}.subtitle{color:#666}.badges{margin-left:auto;display:flex;gap:14px}"
-                + ".score{width:82px;height:82px;border-radius:50%;border:6px solid var(--c);color:var(--c);display:flex;"
-                + "flex-direction:column;align-items:center;justify-content:center;font-size:22px;font-weight:700}"
-                + ".score span{font-size:10px;color:#888;font-weight:600;text-transform:uppercase}"
+                + ".title{font-size:20px;font-weight:700}.subtitle{color:#666}"
                 + ".legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 28px;background:#fafafa;border-bottom:1px solid #eee;"
                 + "font-size:13px}.grp{color:#999;font-weight:700;text-transform:uppercase;font-size:11px}"
                 + ".chip{display:flex;align-items:center;gap:6px;color:#555}.chip .box{width:14px;height:14px;border-radius:3px;display:inline-block}"

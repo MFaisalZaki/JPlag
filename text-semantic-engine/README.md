@@ -180,7 +180,7 @@ Caveat: attribution detection is a lightweight text heuristic. It cannot see foo
 
 It works at the **sentence** level via SBERT alignment (`--sentence-threshold` controls the cutoff), so it highlights *paraphrased* sentences, not only verbatim copies. Each query sentence is attributed to its single best-matching source, so identical sources are not double-counted. Requires the SBERT model (downloaded on first use); the report is a standalone `.html` file you open in any browser.
 
-Pass **`--exclude-attributed`** to hide quoted/cited matches entirely and drop them from the score — since acknowledged reuse is not plagiarism, highlighting it can read as a false flag. The report then highlights only the unattributed concerns (with a note of how much quoted/cited material was hidden), mirroring Turnitin's "exclude quotes and bibliography". Without the flag, attributed matches are shown but de-emphasized (faded, marked ✓) so you can still review them.
+**By default, quoted/cited matches are hidden and excluded from the score** — acknowledged reuse is not plagiarism, so highlighting it would read as a false flag. The report highlights only the unattributed concerns, with a legend note of how much quoted/cited material was hidden (like Turnitin's "exclude quotes and bibliography"). Pass **`--show-attributed`** if you want to display them too (de-emphasized, marked ✓) for review.
 
 Example (essay3, a paraphrase of essay1, cross-referenced against the archive): 54% similarity, with 42% attributed to `essay1_original`.
 
