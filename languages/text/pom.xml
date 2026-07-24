@@ -14,5 +14,15 @@
             <groupId>edu.stanford.nlp</groupId>
             <artifactId>stanford-corenlp</artifactId>
         </dependency>
+        <!-- WordNet, used for optional lemmatization and synonym canonicalization (paraphrase detection). -->
+        <dependency>
+            <groupId>net.sf.extjwnl</groupId>
+            <artifactId>extjwnl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.sf.extjwnl</groupId>
+            <artifactId>extjwnl-data-wn31</artifactId>
+            <scope>runtime</scope>
+        </dependency>
     </dependencies>
 </project>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>de.jplag</groupId>
+        <artifactId>aggregator</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>text-semantic-engine</artifactId>
+    <name>JPlag: Semantic Text Engine</name>
+    <description>Standalone, order-independent plagiarism engine for natural-language text. Unlike the token-based Greedy String
+        Tiling core, it compares documents by TF-IDF cosine similarity over WordNet-normalized terms, so it detects
+        paraphrasing that reorders or rewrites content. Reuses the text language module for tokenization and
+        normalization; it does not modify the JPlag comparison core.</description>
+
+    <dependencies>
+        <!-- Reused for tokenization + WordNet normalization (lemmatization, stop words, synonyms). -->
+        <dependency>
+            <groupId>de.jplag</groupId>
+            <artifactId>text</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>de.jplag</groupId>
+            <artifactId>language-api</artifactId>
+        </dependency>
+
+        <!-- JSON report output. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Command line interface. -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+
+        <!-- Logging. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Convenience: mvn -pl text-semantic-engine exec:java -Dexec.args="<submissions-directory>" -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>de.jplag.text.semantic.SemanticEngineCli</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -29,6 +29,7 @@ public class ParserAdapter {
     private static final String ANNOTATORS_KEY = "annotators";
     private static final String ANNOTATORS_VALUE = "tokenize";
     private final StanfordCoreNLP pipeline;
+    private final TextNormalizer normalizer;
 
     private List<Token> tokens;
     private File currentFile;
@@ -39,12 +40,15 @@ public class ParserAdapter {
     private int currentLineBreakIndex;
 
     /**
-     * Created the parser adapter.
+     * Creates the parser adapter with the given text language options, which configure how words are normalized into token
+     * types.
+     * @param options the configured text language options.
      */
-    public ParserAdapter() {
+    public ParserAdapter(TextLanguageOptions options) {
         Properties properties = new Properties();
         properties.put(ANNOTATORS_KEY, ANNOTATORS_VALUE);
         this.pipeline = new StanfordCoreNLP(properties);
+        this.normalizer = new TextNormalizer(options);
     }
 
     /**
@@ -74,7 +78,7 @@ public class ParserAdapter {
             advanceLineBreaks(content, lastTokenEnd, token.beginPosition());
             lastTokenEnd = token.endPosition();
             if (isWord(token)) {
-                addToken(token);
+                normalizer.normalize(token.originalText()).ifPresent(description -> addToken(token, description));
             }
         }
     }
@@ -106,13 +110,12 @@ public class ParserAdapter {
         return text.chars().anyMatch(it -> Character.isAlphabetic(it) || Character.isDigit(it));
     }
 
-    private void addToken(CoreLabel label) {
-        String text = label.originalText();
+    private void addToken(CoreLabel label, String description) {
         int startColumn = label.beginPosition() - currentLineBreakIndex;
         int endColumn = label.endPosition() - currentLineBreakIndex;
         int length = label.endPosition() - label.beginPosition();
         // As a token can not stretch multiple lines, the startLine is equal to the end line
-        tokens.add(new Token(new TextTokenType(text), currentFile, currentLine, startColumn, currentLine, endColumn, length));
+        tokens.add(new Token(new TextTokenType(description), currentFile, currentLine, startColumn, currentLine, endColumn, length));
     }
 
     private String readFile(File file) throws ParsingException {

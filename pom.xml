@@ -81,6 +81,8 @@
         <version.auto-service>1.1.1</version.auto-service>
         <version.corenlp>4.5.10</version.corenlp>
         <version.eclipse.core>3.23.100</version.eclipse.core>
+        <version.extjwnl>2.0.5</version.extjwnl>
+        <version.extjwnl.data>1.2</version.extjwnl.data>
         <version.eclipse.emfatic>1.1.0</version.eclipse.emfatic>
         <version.emf.ecore-xmi>2.39.0</version.emf.ecore-xmi>
         <version.emf.ecore>2.44.0</version.emf.ecore>
@@ -159,6 +161,18 @@
                 <groupId>edu.stanford.nlp</groupId>
                 <artifactId>stanford-corenlp</artifactId>
                 <version>${version.corenlp}</version>
+            </dependency>
+
+            <!-- WordNet (extJWNL) for text normalization: lemmatization and synonym canonicalization -->
+            <dependency>
+                <groupId>net.sf.extjwnl</groupId>
+                <artifactId>extjwnl</artifactId>
+                <version>${version.extjwnl}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.sf.extjwnl</groupId>
+                <artifactId>extjwnl-data-wn31</artifactId>
+                <version>${version.extjwnl.data}</version>
             </dependency>
 
             <!-- LOGGER -->
@@ -811,6 +825,7 @@
                 <module>language-api</module>
                 <module>language-antlr-utils</module>
                 <module>language-testutils</module>
+                <module>text-semantic-engine</module>
             </modules>
         </profile>
         <profile>

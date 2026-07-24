@@ -7,16 +7,22 @@ import java.util.Set;
 import de.jplag.Language;
 import de.jplag.ParsingException;
 import de.jplag.Token;
+import de.jplag.options.LanguageOptions;
 
 import com.google.auto.service.AutoService;
 
 /**
- * Language class for parsing (natural language) text. This language module employs a primitive approach where
- * individual words are interpreted as token types. Whitespace and special characters are ignored. This approach works,
- * but there are better approaches for text plagiarism out there (based on NLP techniques).
+ * Language class for parsing (natural language) text. By default it employs a primitive approach where individual words
+ * are interpreted as token types, while whitespace and special characters are ignored. This works well for detecting
+ * (near-)verbatim reuse but is blind to paraphrasing. To also detect paraphrased text, the module offers optional,
+ * WordNet-based normalization (lemmatization, stop-word removal and synonym canonicalization) via
+ * {@link TextLanguageOptions}; these collapse surface variants into shared token types so the core comparison can match
+ * them. The normalization options are English-specific and disabled by default.
  */
 @AutoService(Language.class)
 public class NaturalLanguage implements Language {
+
+    private final TextLanguageOptions options = new TextLanguageOptions();
 
     @Override
     public List<String> fileExtensions() {
@@ -40,7 +46,12 @@ public class NaturalLanguage implements Language {
 
     @Override
     public List<Token> parse(Set<File> files, boolean normalize) throws ParsingException {
-        return new ParserAdapter().parse(files);
+        return new ParserAdapter(options).parse(files);
+    }
+
+    @Override
+    public LanguageOptions getOptions() {
+        return options;
     }
 
     @Override
