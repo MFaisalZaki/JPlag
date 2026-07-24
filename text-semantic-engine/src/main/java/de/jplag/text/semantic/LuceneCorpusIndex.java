@@ -47,6 +47,7 @@ import de.jplag.text.semantic.SemanticEngineConfiguration.Backend;
 public class LuceneCorpusIndex {
 
     private static final String FIELD_ID = "id";
+    private static final String FIELD_AUTHOR = "author";
     private static final String FIELD_TERMS = "terms";
     private static final String FIELD_VECTOR = "vector";
     private static final String FIELD_TEXT = "text";
@@ -71,22 +72,34 @@ public class LuceneCorpusIndex {
     }
 
     /**
-     * Adds (or updates by id) the given documents to the index.
+     * Adds (or updates by id) the given documents to the index with an unknown author.
      * @param documents the analyzed documents to index.
      * @throws IOException if writing the index fails.
      */
     public void index(Collection<AnalyzedSubmission> documents) throws IOException {
+        index(documents, "");
+    }
+
+    /**
+     * Adds (or updates by id) the given documents to the index, attributing them to the given author (used to detect
+     * self-plagiarism at query time).
+     * @param documents the analyzed documents to index.
+     * @param author the author of these documents (empty if unknown).
+     * @throws IOException if writing the index fails.
+     */
+    public void index(Collection<AnalyzedSubmission> documents, String author) throws IOException {
         try (Directory directory = FSDirectory.open(indexDirectory);
                 IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(new WhitespaceAnalyzer()))) {
             for (AnalyzedSubmission document : documents) {
-                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document));
+                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document, author));
             }
         }
     }
 
-    private Document toLuceneDocument(AnalyzedSubmission submission) {
+    private Document toLuceneDocument(AnalyzedSubmission submission, String author) {
         Document document = new Document();
         document.add(new StringField(FIELD_ID, submission.name(), Field.Store.YES));
+        document.add(new StringField(FIELD_AUTHOR, author, Field.Store.YES));
         document.add(new TextField(FIELD_TERMS, expandTerms(submission.termFrequencies()), Field.Store.NO));
         document.add(new StoredField(FIELD_TEXT, submission.text()));
         float[] embedding = embedder.embed(submission.text());
@@ -130,8 +143,10 @@ public class LuceneCorpusIndex {
             for (String id : ids) {
                 TopDocs topDocs = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
                 if (topDocs.scoreDocs.length > 0) {
-                    String text = storedFields.document(topDocs.scoreDocs[0].doc).get(FIELD_TEXT);
-                    documents.add(new ArchivedDocument(id, text == null ? "" : text));
+                    Document stored = storedFields.document(topDocs.scoreDocs[0].doc);
+                    String author = stored.get(FIELD_AUTHOR);
+                    String text = stored.get(FIELD_TEXT);
+                    documents.add(new ArchivedDocument(id, author == null ? "" : author, text == null ? "" : text));
                 }
             }
         }

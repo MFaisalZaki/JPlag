@@ -156,6 +156,20 @@ mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.C
 
 Options: `--backend TFIDF|SBERT|ENSEMBLE` (BM25 / vector / RRF of both), `--top-k`, and `--no-embeddings` on `index` to build a lexical-only index without the model. Ensemble scores are RRF rank-fusion values (small, rank-based), not `[0,1]` similarities — the *ranking* is the signal.
 
+### Self-plagiarism
+
+Tag indexed documents with an author (`--author`) to detect **self-plagiarism** — a student reusing their own prior work. When a query is submitted with an author, matches whose source is by that same author are flagged separately from reuse of another author's work.
+
+```bash
+# Index each student's prior work under their name.
+CorpusCli index --index /path/to/index --author alice /path/to/alice-prior-docs
+
+# Check a new submission; --author flags reuse of the submitter's own past work.
+CorpusCli query --index /path/to/index --query submission --author alice --html-report reports
+```
+
+Same-author matches are labelled `[SELF-PLAGIARISM]` in the console and marked ↺ (with a dashed outline and a "Self-reuse" figure) in the HTML report, so self-reuse is distinguished from ordinary plagiarism/collusion.
+
 Scale notes: doc-level embeddings (one vector per document) keep the vector index tractable at 100k–1M+ docs; retrieval is two-stage (cheap BM25/ANN candidates). Indexing currently reads a directory batch into memory — for very large archives, add in batches (each `index` call appends). A future refinement is re-ranking the top candidates with the full sentence-alignment scorer.
 
 ## Turnitin-style originality reports

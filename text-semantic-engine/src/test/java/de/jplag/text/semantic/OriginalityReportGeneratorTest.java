@@ -94,6 +94,18 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testSelfReuseMarkedWhenSourceAuthorMatchesQueryAuthor() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        List<ArchivedDocument> priorWork = List.of(new ArchivedDocument("prior", "alice", "alpha copied line"));
+        String self = generator.generate("q", "alpha copied line", priorWork, "alice");
+        String other = generator.generate("q", "alpha copied line", List.of(new ArchivedDocument("prior", "bob", "alpha copied line")), "alice");
+
+        assertTrue(self.contains("class=\"match self\""), "A match to the same author's work is self-reuse");
+        assertTrue(self.contains("Self-reuse"), "The legend should report self-reuse");
+        assertFalse(other.contains("class=\"match self\""), "A match to another author's work is not self-reuse");
+    }
+
+    @Test
     void testNoMatchesYieldsNoHighlights() {
         OriginalityReportGenerator generator = new OriginalityReportGenerator(0.99, STUB);
         String html = generator.generate("q", "beta one two|gamma three four", List.of(new ArchivedDocument("s", "alpha only")));

@@ -59,6 +59,14 @@ class LuceneCorpusIndexTest {
     }
 
     @Test
+    void testStoresAndRetrievesAuthor() throws IOException {
+        index.index(List.of(document("authored-doc", "alpha", Map.of("alpha", 2))), "alice");
+        List<ArchivedDocument> retrieved = index.documents(List.of("authored-doc"));
+        assertEquals(1, retrieved.size());
+        assertEquals("alice", retrieved.get(0).author(), "The stored author should be retrieved");
+    }
+
+    @Test
     void testLexicalRetrievalRanksTermOverlapFirst() throws IOException {
         AnalyzedSubmission query = document("query", "alpha", Map.of("alpha", 2, "common", 1));
         List<CorpusMatch> matches = index.query(query, Backend.TFIDF, 3);

@@ -67,14 +67,18 @@ public class CorpusCli implements Runnable {
         @Option(names = "--no-embeddings", description = "Index only the lexical (BM25) field; skip SBERT embeddings and the model download.")
         private boolean noEmbeddings;
 
+        @Option(names = "--author", defaultValue = "", description = "Author of these documents; enables self-plagiarism detection at query time.")
+        private String author;
+
         @Override
         public Integer call() throws Exception {
             SemanticEngineConfiguration configuration = defaultConfiguration();
             List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readSubmissions(documents);
             try (DocumentEmbedder embedder = noEmbeddings ? noEmbedder() : new SbertEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
-                index.index(submissions);
-                logger.info("Indexed {} document(s); corpus now holds {}.", submissions.size(), index.size());
+                index.index(submissions, author);
+                logger.info("Indexed {} document(s){}; corpus now holds {}.", submissions.size(), author.isBlank() ? "" : " by '" + author + "'",
+                        index.size());
             }
             return 0;
         }
@@ -111,6 +115,10 @@ public class CorpusCli implements Runnable {
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
 
+        @Option(names = "--author", defaultValue = "", description = "Author of the query document(s); matches to the same "
+                + "author's indexed work are flagged as self-plagiarism.")
+        private String queryAuthor;
+
         @Override
         public Integer call() throws Exception {
             SemanticEngineConfiguration configuration = defaultConfiguration();
@@ -124,22 +132,28 @@ public class CorpusCli implements Runnable {
                         : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed);
                 for (AnalyzedSubmission query : queries) {
                     List<CorpusMatch> matches = index.query(query, backend, topK);
+                    List<ArchivedDocument> sources = reportGenerator != null || !queryAuthor.isBlank()
+                            ? index.documents(matches.stream().map(CorpusMatch::documentId).toList())
+                            : java.util.List.of();
+                    java.util.Map<String, String> authorOf = new java.util.HashMap<>();
+                    sources.forEach(source -> authorOf.put(source.id(), source.author()));
+
                     System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);
                     for (CorpusMatch match : matches) {
-                        System.out.printf("  %.4f  %s%n", match.score(), match.documentId());
+                        boolean self = !queryAuthor.isBlank() && queryAuthor.equals(authorOf.get(match.documentId()));
+                        System.out.printf("  %.4f  %s%s%n", match.score(), match.documentId(), self ? "  [SELF-PLAGIARISM]" : "");
                     }
                     if (reportGenerator != null && htmlReportDirectory != null) {
-                        writeHtmlReport(index, reportGenerator, query, matches);
+                        writeHtmlReport(reportGenerator, query, sources);
                     }
                 }
             }
             return 0;
         }
 
-        private void writeHtmlReport(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query,
-                List<CorpusMatch> matches) throws java.io.IOException {
-            List<ArchivedDocument> sources = index.documents(matches.stream().map(CorpusMatch::documentId).toList());
-            String html = generator.generate(query.name(), query.text(), sources);
+        private void writeHtmlReport(OriginalityReportGenerator generator, AnalyzedSubmission query, List<ArchivedDocument> sources)
+                throws java.io.IOException {
+            String html = generator.generate(query.name(), query.text(), sources, queryAuthor);
             java.nio.file.Files.createDirectories(htmlReportDirectory.toPath());
             java.nio.file.Path output = htmlReportDirectory.toPath().resolve(query.name() + ".html");
             java.nio.file.Files.writeString(output, html);
