@@ -138,6 +138,26 @@ The engine's cosine score is written into the `AVG` metric, which the viewer sor
 
 **Note:** because this engine produces document-level similarities rather than token matches, comparisons are written with an empty `matches` array — the viewer shows the pairs and scores but no in-text highlighting. Use the JSON/CSV output (`-o`) for the explanatory top shared terms.
 
+## Cross-referencing against an archive (corpus index)
+
+The batch mode above compares a set of submissions against each other (all pairs, O(n²)). To instead check a new document against a **large, growing archive** (e.g. years of past submissions), use the persistent **corpus index** — build it once, query in ~log time, and never re-parse or re-embed the archive.
+
+It is backed by [Apache Lucene](https://lucene.apache.org/): each archived document is stored with a **BM25 inverted index** over its normalized terms (lexical retrieval) and an **HNSW dense-vector field** over its SBERT embedding (semantic retrieval). A query retrieves by BM25, by vector nearest-neighbour, or by both fused with **reciprocal-rank fusion (RRF)** — which combines the two rankings without reconciling their different score scales. The index is incremental (documents are added/updated by id).
+
+```bash
+# Build or extend the index (parses + embeds; downloads the SBERT model on first use).
+mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.CorpusCli \
+  -Dexec.args="index --index /path/to/index /path/to/archive"
+
+# Cross-reference new documents against the archive.
+mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.CorpusCli \
+  -Dexec.args="query --index /path/to/index --query /path/to/new-docs --backend ENSEMBLE --top-k 10"
+```
+
+Options: `--backend TFIDF|SBERT|ENSEMBLE` (BM25 / vector / RRF of both), `--top-k`, and `--no-embeddings` on `index` to build a lexical-only index without the model. Ensemble scores are RRF rank-fusion values (small, rank-based), not `[0,1]` similarities — the *ranking* is the signal.
+
+Scale notes: doc-level embeddings (one vector per document) keep the vector index tractable at 100k–1M+ docs; retrieval is two-stage (cheap BM25/ANN candidates). Indexing currently reads a directory batch into memory — for very large archives, add in batches (each `index` call appends). A future refinement is re-ranking the top candidates with the full sentence-alignment scorer.
+
 ## Using it as a library
 
 ```java

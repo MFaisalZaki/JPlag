@@ -57,6 +57,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Persistent, queryable corpus index (inverted index + HNSW vectors) for cross-referencing an archive. -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+        </dependency>
+
         <!-- Command line interface. -->
         <dependency>
             <groupId>info.picocli</groupId>
