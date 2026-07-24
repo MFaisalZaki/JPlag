@@ -65,6 +65,14 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testTrailingCitationInNextSentenceAttributesTheMatch() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        // The copied sentence and its citation are split into two sentences (as CoreNLP would after a period).
+        String html = generator.generate("q", "alpha copied line|(Smith, 2020)", List.of(new ArchivedDocument("s", "alpha copied line")));
+        assertTrue(html.contains("class=\"match attributed\""), "A citation in the following sentence should attribute the match");
+    }
+
+    @Test
     void testUncitedMatchIsUnattributed() {
         OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
         String html = generator.generate("q", "alpha copied line with no source", List.of(new ArchivedDocument("s", "alpha copied line")));

@@ -81,7 +81,8 @@ public class OriginalityReportGenerator {
 
     private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources) {
         List<Attribution> attributions = new ArrayList<>();
-        for (EmbeddedSentence querySentence : querySentences) {
+        for (int i = 0; i < querySentences.size(); i++) {
+            EmbeddedSentence querySentence = querySentences.get(i);
             double bestScore = -1.0;
             String bestSource = null;
             String bestSentence = null;
@@ -97,11 +98,25 @@ public class OriginalityReportGenerator {
             }
             boolean matched = bestSource != null && bestScore >= matchThreshold;
             MatchCategory category = matched ? MatchCategory.fromWordOverlap(wordOverlap(querySentence.text(), bestSentence)) : null;
-            CitationDetector.AttributionCheck check = matched ? CitationDetector.detect(querySentence.text()) : null;
+            String nextSentence = i + 1 < querySentences.size() ? querySentences.get(i + 1).text() : "";
+            CitationDetector.AttributionCheck check = matched ? attributionWithLookahead(querySentence.text(), nextSentence) : null;
             attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestScore, category,
                     check == null ? null : check.status(), check == null ? null : check.evidence(), matched));
         }
         return attributions;
+    }
+
+    /**
+     * Determines a sentence's attribution, checking its own text first and then the following sentence: a citation commonly
+     * trails the borrowed material as a separate clause or sentence, e.g. "...borrowed text. (Smith, 2020)."
+     */
+    private static CitationDetector.AttributionCheck attributionWithLookahead(String sentence, String nextSentence) {
+        CitationDetector.AttributionCheck self = CitationDetector.detect(sentence);
+        if (self.status() != AttributionStatus.UNATTRIBUTED) {
+            return self;
+        }
+        CitationDetector.AttributionCheck next = CitationDetector.detect(nextSentence);
+        return next.status() == AttributionStatus.CITED ? next : self;
     }
 
     private Totals totals(List<EmbeddedSentence> querySentences, List<Attribution> attributions) {
