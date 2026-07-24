@@ -17,9 +17,17 @@ class CitationDetectorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"He argued that \"the result is significant\" in his talk.", "The author wrote “an exact copy of the line” here."})
+    @ValueSource(strings = {"\"An exact copy of the borrowed sentence is reproduced here word for word.\"",
+            "“The entire source line is reproduced verbatim within these quotation marks.”"})
     void testDetectsQuotations(String sentence) {
         assertEquals(AttributionStatus.QUOTED, CitationDetector.detect(sentence).status());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"He said the word \"briefly\" and then moved on to a completely new topic.",
+            "\"I heard,\" said Emily, and then she quietly left the crowded room."})
+    void testIgnoresIncidentalOrDialogueQuotes(String sentence) {
+        assertEquals(AttributionStatus.UNATTRIBUTED, CitationDetector.detect(sentence).status());
     }
 
     @ParameterizedTest

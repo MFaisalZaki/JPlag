@@ -21,6 +21,8 @@ public final class CitationDetector {
     private static final Pattern URL = Pattern.compile("(?:https?://|www\\.)\\S+", Pattern.CASE_INSENSITIVE);
     /** A DOI. */
     private static final Pattern DOI = Pattern.compile("\\b10\\.\\d{4,}/\\S+");
+    /** A sentence counts as a quotation only if at least this fraction of its characters are inside quotes. */
+    private static final double QUOTED_FRACTION = 0.6;
 
     private CitationDetector() {
     }
@@ -51,16 +53,49 @@ public final class CitationDetector {
         return new AttributionCheck(AttributionStatus.UNATTRIBUTED, null);
     }
 
-    /** True if the sentence contains a pair of double/curly/guillemet quotation marks. */
+    /**
+     * True if most of the sentence is enclosed in quotation marks, i.e. it quotes borrowed material rather than merely
+     * containing an incidental quoted phrase or dialogue. Considers straight, curly, and guillemet quotes.
+     */
     private static boolean isQuoted(String sentence) {
-        int straightQuotes = 0;
+        if (sentence.isEmpty()) {
+            return false;
+        }
+        int quoted = Math.max(toggledQuotedLength(sentence),
+                Math.max(pairedQuotedLength(sentence, '“', '”'), pairedQuotedLength(sentence, '«', '»')));
+        return quoted >= QUOTED_FRACTION * sentence.length();
+    }
+
+    /** Characters enclosed by matched pairs of the straight quote ("). Unclosed trailing quotes contribute nothing. */
+    private static int toggledQuotedLength(String sentence) {
+        int count = 0;
+        int start = -1;
         for (int i = 0; i < sentence.length(); i++) {
             if (sentence.charAt(i) == '"') {
-                straightQuotes++;
+                if (start < 0) {
+                    start = i;
+                } else {
+                    count += i - start - 1;
+                    start = -1;
+                }
             }
         }
-        boolean curly = sentence.indexOf('“') >= 0 && sentence.indexOf('”') >= 0;
-        boolean guillemets = sentence.indexOf('«') >= 0 && sentence.indexOf('»') >= 0;
-        return straightQuotes >= 2 || curly || guillemets;
+        return count;
+    }
+
+    /** Characters enclosed by matched open/close quote pairs (e.g. curly or guillemet quotes). */
+    private static int pairedQuotedLength(String sentence, char open, char close) {
+        int count = 0;
+        int start = -1;
+        for (int i = 0; i < sentence.length(); i++) {
+            char character = sentence.charAt(i);
+            if (character == open && start < 0) {
+                start = i;
+            } else if (character == close && start >= 0) {
+                count += i - start - 1;
+                start = -1;
+            }
+        }
+        return count;
     }
 }
