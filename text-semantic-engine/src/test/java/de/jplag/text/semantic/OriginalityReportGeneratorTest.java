@@ -81,6 +81,19 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testExcludeAttributedHidesCitedMatchesButKeepsConcerns() {
+        String query = "alpha cited copy (Smith, 2020)|alpha bare copy here";
+        List<ArchivedDocument> source = List.of(new ArchivedDocument("s", "alpha thing"));
+
+        String shown = new OriginalityReportGenerator(0.9, STUB, false).generate("q", query, source);
+        String hidden = new OriginalityReportGenerator(0.9, STUB, true).generate("q", query, source);
+
+        assertTrue(shown.contains("class=\"match attributed\""), "By default a cited match is shown (de-emphasized)");
+        assertFalse(hidden.contains("class=\"match attributed\""), "With exclude-attributed, cited matches are not highlighted");
+        assertTrue(hidden.contains("class=\"match\" style="), "Unattributed matches are still highlighted");
+    }
+
+    @Test
     void testNoMatchesYieldsNoHighlights() {
         OriginalityReportGenerator generator = new OriginalityReportGenerator(0.99, STUB);
         String html = generator.generate("q", "beta one two|gamma three four", List.of(new ArchivedDocument("s", "alpha only")));

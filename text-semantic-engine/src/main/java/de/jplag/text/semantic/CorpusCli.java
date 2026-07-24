@@ -107,6 +107,10 @@ public class CorpusCli implements Runnable {
                 + "match in the HTML report. Default: ${DEFAULT-VALUE}.")
         private double sentenceThreshold;
 
+        @Option(names = "--exclude-attributed", description = "In the HTML report, hide quoted/cited matches and exclude "
+                + "them from the score, showing only unattributed concerns (like Turnitin's exclude quotes/bibliography).")
+        private boolean excludeAttributed;
+
         @Override
         public Integer call() throws Exception {
             SemanticEngineConfiguration configuration = defaultConfiguration();
@@ -117,7 +121,7 @@ public class CorpusCli implements Runnable {
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexPath, embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText);
+                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, excludeAttributed);
                 for (AnalyzedSubmission query : queries) {
                     List<CorpusMatch> matches = index.query(query, backend, topK);
                     System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);

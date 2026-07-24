@@ -23,22 +23,34 @@ import java.util.function.Function;
  * unattributed.</li>
  * </ul>
  * The report shows the overall similarity and, separately, the <em>unattributed</em> similarity (the actual plagiarism
- * concern), a category breakdown, a ranked source list, and the query text with matched sentences colour-coded by
- * category (attributed matches are de-emphasized).
+ * concern). When {@code excludeAttributed} is set, quoted/cited matches are neither highlighted nor counted, so the
+ * report shows only the unattributed concerns (like Turnitin's "exclude quotes and bibliography").
  */
 public class OriginalityReportGenerator {
 
     private final double matchThreshold;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
+    private final boolean excludeAttributed;
 
     /**
+     * Creates a generator that shows attributed matches (de-emphasized).
      * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.7).
      * @param sentenceEmbedder splits a text into sentences and embeds them (e.g.
      * {@code SbertEmbedder::embedSentencesWithText}).
      */
     public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder) {
+        this(matchThreshold, sentenceEmbedder, false);
+    }
+
+    /**
+     * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.7).
+     * @param sentenceEmbedder splits a text into sentences and embeds them.
+     * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted (only concerns are shown).
+     */
+    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed) {
         this.matchThreshold = matchThreshold;
         this.sentenceEmbedder = sentenceEmbedder;
+        this.excludeAttributed = excludeAttributed;
     }
 
     private record SourceDocument(String id, List<EmbeddedSentence> sentences) {
@@ -46,10 +58,15 @@ public class OriginalityReportGenerator {
 
     private record Attribution(String text, String sourceId, String sourceSentence, double score, MatchCategory category,
             AttributionStatus attribution, String attributionEvidence, boolean matched) {
+
+        // Whether this match should be highlighted and counted (a match that is not an excluded attributed one).
+        boolean reported(boolean excludeAttributed) {
+            return matched && !(excludeAttributed && attribution.isAttributed());
+        }
     }
 
-    private record Totals(double overallPercent, double unattributedPercent, double attributedPercent, Map<MatchCategory, Integer> wordsPerCategory,
-            Map<String, Integer> wordsPerSource, int totalWords) {
+    private record Totals(double overallPercent, double unattributedPercent, double attributedPercent, double excludedPercent,
+            Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource, int totalWords) {
     }
 
     /**
@@ -125,21 +142,27 @@ public class OriginalityReportGenerator {
         Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
         int unattributedWords = 0;
+        int excludedWords = 0;
         for (Attribution attribution : attributions) {
-            if (attribution.matched()) {
-                int words = wordCount(attribution.text());
-                matchedWords += words;
-                wordsPerSource.merge(attribution.sourceId(), words, Integer::sum);
-                wordsPerCategory.merge(attribution.category(), words, Integer::sum);
-                if (!attribution.attribution().isAttributed()) {
-                    unattributedWords += words;
-                }
+            if (!attribution.matched()) {
+                continue;
+            }
+            int words = wordCount(attribution.text());
+            if (!attribution.reported(excludeAttributed)) {
+                excludedWords += words; // an attributed match hidden by excludeAttributed
+                continue;
+            }
+            matchedWords += words;
+            wordsPerSource.merge(attribution.sourceId(), words, Integer::sum);
+            wordsPerCategory.merge(attribution.category(), words, Integer::sum);
+            if (!attribution.attribution().isAttributed()) {
+                unattributedWords += words;
             }
         }
-        double overall = totalWords == 0 ? 0.0 : 100.0 * matchedWords / totalWords;
-        double unattributed = totalWords == 0 ? 0.0 : 100.0 * unattributedWords / totalWords;
-        double attributed = overall - unattributed;
-        return new Totals(overall, unattributed, attributed, wordsPerCategory, wordsPerSource, totalWords);
+        double overall = percent(matchedWords, totalWords);
+        double unattributed = percent(unattributedWords, totalWords);
+        return new Totals(overall, unattributed, overall - unattributed, percent(excludedWords, totalWords), wordsPerCategory, wordsPerSource,
+                totalWords);
     }
 
     private String renderHtml(String queryId, Totals totals, List<Attribution> attributions, List<String> orderedSources,
@@ -152,23 +175,29 @@ public class OriginalityReportGenerator {
 
         html.append("<header><div><div class=\"title\">Originality Report</div><div class=\"subtitle\">").append(escape(queryId))
                 .append("</div></div><div class=\"badges\">");
-        html.append(badge(totals.overallPercent(), scoreColour(totals.overallPercent()), "similarity"));
-        html.append(badge(totals.unattributedPercent(), "#d32f2f", "unattributed"));
+        html.append(badge(totals.overallPercent(), scoreColour(totals.overallPercent()), excludeAttributed ? "unattributed" : "similarity"));
+        if (!excludeAttributed) {
+            html.append(badge(totals.unattributedPercent(), "#d32f2f", "unattributed"));
+        }
         html.append("</div></header>");
 
         html.append("<div class=\"legend\"><span class=\"grp\">Type:</span>");
         for (MatchCategory category : MatchCategory.values()) {
-            double percent = percent(totals.wordsPerCategory().getOrDefault(category, 0), totals.totalWords());
-            html.append(chip(category.colour(), category.label(), percent));
+            html.append(chip(category.colour(), category.label(), percent(totals.wordsPerCategory().getOrDefault(category, 0), totals.totalWords())));
         }
-        html.append("<span class=\"grp\">Attribution:</span>");
-        html.append(chip("#a5d6a7", "Quoted / cited", totals.attributedPercent()));
-        html.append(chip("#ef5350", "Unattributed (concern)", totals.unattributedPercent()));
+        if (excludeAttributed) {
+            html.append("<span class=\"grp\">Excluded:</span>");
+            html.append(chip("#a5d6a7", "Quoted / cited (hidden)", totals.excludedPercent()));
+        } else {
+            html.append("<span class=\"grp\">Attribution:</span>");
+            html.append(chip("#a5d6a7", "Quoted / cited", totals.attributedPercent()));
+            html.append(chip("#ef5350", "Unattributed (concern)", totals.unattributedPercent()));
+        }
         html.append("</div>");
 
         html.append("<div class=\"layout\"><main>");
         for (Attribution attribution : attributions) {
-            if (attribution.matched()) {
+            if (attribution.reported(excludeAttributed)) {
                 boolean attributed = attribution.attribution().isAttributed();
                 html.append("<span class=\"match").append(attributed ? " attributed" : "").append("\" style=\"background:")
                         .append(attribution.category().colour()).append("\" title=\"")
@@ -186,14 +215,17 @@ public class OriginalityReportGenerator {
             html.append("<p class=\"none\">No matching sources found.</p>");
         }
         for (String source : orderedSources) {
-            double percent = percent(totals.wordsPerSource().get(source), totals.totalWords());
             html.append("<div class=\"source\"><span class=\"swatch\">").append(rankOf.get(source)).append("</span><span class=\"sid\">")
-                    .append(escape(source)).append("</span><span class=\"pct\">").append(format(percent)).append("</span></div>");
+                    .append(escape(source)).append("</span><span class=\"pct\">")
+                    .append(format(percent(totals.wordsPerSource().get(source), totals.totalWords()))).append("</span></div>");
         }
         html.append("</aside></div>");
-        html.append("<footer>Overall similarity is the share of words matched to a source; <b>unattributed</b> excludes passages that are "
-                + "quoted or cited (marked ✓) and is the actual plagiarism concern. Matches are semantic (SBERT, threshold ")
-                .append(String.format(Locale.ROOT, "%.2f", matchThreshold)).append("); the type comes from literal word overlap.</footer>");
+        html.append("<footer>").append(excludeAttributed
+                ? "Only unattributed matches are shown; quoted/cited passages are hidden and excluded from the score. "
+                : "Overall similarity is the share of words matched to a source; <b>unattributed</b> excludes passages that are quoted or cited "
+                        + "(marked ✓) and is the actual plagiarism concern. ")
+                .append("Matches are semantic (SBERT, threshold ").append(String.format(Locale.ROOT, "%.2f", matchThreshold))
+                .append("); the type comes from literal word overlap.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -212,11 +244,11 @@ public class OriginalityReportGenerator {
         if (excerpt.length() > 140) {
             excerpt = excerpt.substring(0, 140) + "...";
         }
-        String attribution1 = attribution.attribution().label();
+        String status = attribution.attribution().label();
         if (attribution.attributionEvidence() != null) {
-            attribution1 += " (" + attribution.attributionEvidence() + ")";
+            status += " (" + attribution.attributionEvidence() + ")";
         }
-        return String.format(Locale.ROOT, "%s - %s - source %d %s (%.0f%% similar): %s", attribution.category().label(), attribution1, rank,
+        return String.format(Locale.ROOT, "%s - %s - source %d %s (%.0f%% similar): %s", attribution.category().label(), status, rank,
                 attribution.sourceId(), attribution.score() * 100, excerpt);
     }
 
