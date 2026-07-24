@@ -106,6 +106,20 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testSelfCopyIsLightPurpleAndExcludedFromCopyPaste() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        // Identical wording to the same author's prior work: a self-copy (copy-paste level word overlap).
+        List<ArchivedDocument> priorWork = List.of(new ArchivedDocument("prior", "alice", "alpha copied line"));
+        String html = generator.generate("q", "alpha copied line", priorWork, "alice");
+
+        assertTrue(html.contains("class=\"match self\" style=\"background:#e1bee7"),
+                "A self-copy should be highlighted in light purple, not the copy-paste colour");
+        assertFalse(html.contains("dashed"), "The dashed self-reuse outline should be gone");
+        assertTrue(html.contains("Copy-paste <b>0%</b>"), "A self-copy must not be counted in the copy-paste category");
+        assertTrue(html.contains("Self-reuse (own prior work) <b>100%</b>"), "It is counted as self-reuse instead");
+    }
+
+    @Test
     void testNoMatchesYieldsNoHighlights() {
         OriginalityReportGenerator generator = new OriginalityReportGenerator(0.99, STUB);
         String html = generator.generate("q", "beta one two|gamma three four", List.of(new ArchivedDocument("s", "alpha only")));

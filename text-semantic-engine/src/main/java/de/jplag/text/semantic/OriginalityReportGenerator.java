@@ -29,6 +29,12 @@ import java.util.function.Function;
  */
 public class OriginalityReportGenerator {
 
+    /**
+     * Light-purple highlight for self-reuse (own prior work), kept distinct from the copy-paste/paraphrase category
+     * colours.
+     */
+    private static final String SELF_REUSE_COLOUR = "#e1bee7";
+
     private final double matchThreshold;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
     private final boolean excludeAttributed;
@@ -171,12 +177,14 @@ public class OriginalityReportGenerator {
             }
             matchedWords += words;
             wordsPerSource.merge(attribution.sourceId(), words, Integer::sum);
-            wordsPerCategory.merge(attribution.category(), words, Integer::sum);
             if (!attribution.attribution().isAttributed()) {
                 unattributedWords += words;
             }
             if (attribution.selfReuse()) {
+                // Self-reuse is tracked on its own, not folded into the copy-paste/paraphrase category breakdown.
                 selfReuseWords += words;
+            } else {
+                wordsPerCategory.merge(attribution.category(), words, Integer::sum);
             }
         }
         double overall = percent(matchedWords, totalWords);
@@ -202,7 +210,7 @@ public class OriginalityReportGenerator {
         }
         if (authorKnown) {
             html.append("<span class=\"grp\">Self:</span>");
-            html.append(chip("#8e24aa", "Self-reuse (own prior work)", totals.selfReusePercent()));
+            html.append(chip(SELF_REUSE_COLOUR, "Self-reuse (own prior work)", totals.selfReusePercent()));
         }
         if (excludeAttributed) {
             html.append("<span class=\"grp\">Excluded:</span>");
@@ -218,8 +226,9 @@ public class OriginalityReportGenerator {
         for (Attribution attribution : attributions) {
             if (attribution.reported(excludeAttributed)) {
                 boolean attributed = attribution.attribution().isAttributed();
+                String background = attribution.selfReuse() ? SELF_REUSE_COLOUR : attribution.category().colour();
                 html.append("<span class=\"match").append(attributed ? " attributed" : "").append(attribution.selfReuse() ? " self" : "")
-                        .append("\" style=\"background:").append(attribution.category().colour()).append("\" title=\"")
+                        .append("\" style=\"background:").append(background).append("\" title=\"")
                         .append(escape(tooltip(attribution, rankOf.get(attribution.sourceId())))).append("\">").append(escape(attribution.text()));
                 if (attribution.selfReuse()) {
                     html.append("<sup class=\"self-mark\">↺</sup>");
@@ -322,8 +331,7 @@ public class OriginalityReportGenerator {
                 + ".layout{display:flex;gap:20px;max-width:1100px;margin:24px auto;padding:0 20px;align-items:flex-start}"
                 + "main{flex:1;background:#fff;padding:28px 32px;border-radius:8px;line-height:2;font-size:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
                 + ".match{border-radius:3px;padding:1px 2px;cursor:help}.match sup{font-size:10px;font-weight:700;color:#555;margin-left:1px}"
-                + ".match.attributed{opacity:.45;text-decoration:underline dotted}.match .att{color:#2e7d32}"
-                + ".match.self{outline:2px dashed #8e24aa;outline-offset:1px}.match .self-mark{color:#8e24aa}"
+                + ".match.attributed{opacity:.45;text-decoration:underline dotted}.match .att{color:#2e7d32}" + ".match .self-mark{color:#8e24aa}"
                 + "aside{width:270px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:sticky;top:20px}"
                 + "aside h2{font-size:13px;text-transform:uppercase;color:#888;margin:0 0 14px}"
                 + ".source{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}"
