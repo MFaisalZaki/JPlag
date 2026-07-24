@@ -35,10 +35,11 @@ The engine has two interchangeable similarity backends (`--backend`):
 |---|---|---|---|
 | **TFIDF** (default) | lexical: TF-IDF cosine over WordNet-normalized terms | reordering + synonyms + inflection | pure JVM, instant |
 | **SBERT** | semantic: local sentence embeddings (all-MiniLM-L6-v2), compared by passage alignment | the above **plus** rewrites that share meaning without sharing vocabulary | downloads a model + PyTorch runtime (~a few hundred MB) on first use; slower |
+| **ENSEMBLE** | the **max** of the TFIDF and SBERT scores per pair | flags a pair if *either* signal is strong | runs both (so includes SBERT's cost) |
 
 The **SBERT** backend splits each document into sentences (CoreNLP `ssplit`), embeds each sentence locally, and scores a pair by *soft passage alignment* — each sentence's best-matching counterpart in the other document, averaged symmetrically (which, unlike mean-pooling, does not wash out on long documents). The model and PyTorch native runtime are fetched automatically by [Deep Java Library](https://djl.ai/) the first time you run it. SBERT produces document-level scores rather than token matches, so it does not emit shared-term explanations.
 
-Which to use: **TFIDF** is the strong, cheap default and wins when paraphrases keep vocabulary. Reach for **SBERT** when you expect genuine rewording where lexical overlap collapses. Example:
+Which to use: **TFIDF** is the strong, cheap default and wins when paraphrases keep vocabulary. Reach for **SBERT** when you expect genuine rewording where lexical overlap collapses, or **ENSEMBLE** to cover both threat models at once. (Note: because SBERT scores run higher than TF-IDF, the ensemble max often tracks the SBERT score, so it inherits SBERT's higher noise floor.) Example:
 
 ```bash
 mvn -pl text-semantic-engine exec:java -Dexec.args="/path/to/submissions --backend SBERT --threshold 0.4"

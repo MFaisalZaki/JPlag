@@ -21,7 +21,9 @@ public class SemanticEngineConfiguration {
         /** Lexical TF-IDF cosine over WordNet-normalized terms (fast, pure JVM, order-independent). */
         TFIDF,
         /** Neural SBERT sentence embeddings with passage alignment (semantic; downloads a model on first use). */
-        SBERT
+        SBERT,
+        /** Maximum of the TFIDF and SBERT scores per pair (flags a pair if either signal is strong). */
+        ENSEMBLE
     }
 
     private final TextLanguageOptions normalizationOptions;
@@ -97,6 +99,7 @@ public class SemanticEngineConfiguration {
         return switch (backend) {
             case TFIDF -> new SemanticComparisonEngine(this);
             case SBERT -> new SbertBackend(this);
+            case ENSEMBLE -> new EnsembleBackend(this);
         };
     }
 

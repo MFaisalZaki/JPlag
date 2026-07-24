@@ -35,7 +35,8 @@ public class SemanticEngineCli implements Callable<Integer> {
     private int topTerms;
 
     @Option(names = "--backend", defaultValue = "TFIDF", description = "Similarity backend: ${COMPLETION-CANDIDATES}. "
-            + "TFIDF is lexical and fast; SBERT is neural and downloads a model on first use. Default: ${DEFAULT-VALUE}.")
+            + "TFIDF is lexical and fast; SBERT is neural (downloads a model on first use); ENSEMBLE takes the max of both. "
+            + "Default: ${DEFAULT-VALUE}.")
     private SemanticEngineConfiguration.Backend backend;
 
     @Option(names = {"-o", "--output"}, description = "Directory for the JSON/CSV reports. Console only if omitted.")
