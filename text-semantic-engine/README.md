@@ -182,6 +182,21 @@ It works at the **sentence** level via SBERT alignment (`--sentence-threshold` c
 
 Example (essay3, a paraphrase of essay1, cross-referenced against the archive): 54% similarity, with 42% attributed to `essay1_original`.
 
+## Authorship verification (ghostwriting / contract cheating)
+
+A different kind of check: not *did they reuse a source*, but *did they write it*. Content can be entirely original — so the plagiarism detectors find nothing — yet be written by someone else. Authorship verification compares **writing style**, not content.
+
+It uses **Burrows's Delta** ([StylometryAnalyzer](src/main/java/de/jplag/text/semantic/StylometryAnalyzer.java)): each candidate author and the query document become a z-scored vector of the corpus's most-frequent-word relative frequencies (dominated by topic-independent function words like *the*, *however*, *just*, which authors use consistently and unconsciously). The candidate with the smallest Delta is the closest stylistic match; if that is not the claimed author, the style is inconsistent with them.
+
+```bash
+mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.AuthorshipCli \
+  -Dexec.args="--known authors --query submissions --claimed alice"
+```
+
+`authors/` has one sub-directory per candidate author (their known prior documents); each query document is ranked against them. With `--claimed`, a submission whose closest style is *not* the claimed author is flagged as possible ghostwriting. Example: a submission claimed by "alice" but written in "bob's" style — `WARNING: style is closest to 'bob', not the claimed author 'alice'`.
+
+Caveats: stylometry needs a reasonable amount of known text per author (a few hundred words minimum) and at least two candidates; it is a **triage signal**, not proof — genre, co-authoring, heavy editing, and translation all shift style. It answers "does this match the claimed author's style", not "who wrote it" in the open world.
+
 ## Using it as a library
 
 ```java
