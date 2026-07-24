@@ -168,12 +168,15 @@ mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.C
 ```
 
 Each report shows:
-- an **overall similarity score** (share of the query's words in sentences that match an archived source),
+- an **overall similarity score** and, separately, an **unattributed score** — the share of matched words that are *not* quoted or cited, i.e. the actual plagiarism concern,
 - a **category breakdown** — each match is classified by how much of the *literal wording* it shares with its source: **Copy-paste** (near-identical), **Lightly edited**, or **Paraphrase** (same meaning, different words),
+- an **attribution split** — matched sentences that are quoted or cited (marked ✓, de-emphasized) vs unattributed,
 - a **ranked list of sources** with their contribution percentage,
-- the **query text with matched sentences highlighted** inline, **colour-coded by category**; hovering a highlight shows the category, matched source, and its similarity.
+- the **query text with matched sentences highlighted** inline, **colour-coded by category**; hovering a highlight shows the category, attribution status, matched source, and similarity.
 
-The category comes from combining the two signals the engine already has: every match has high *semantic* similarity (why it matched), and the *lexical* overlap (Jaccard of the sentences' words) then separates copied wording from genuine rewording. Example: essay3 (a paraphrase of essay1) scores 54% — 35% Paraphrase, 16% Lightly edited, 3% Copy-paste.
+Two orthogonal signals drive it. The **category** combines high *semantic* similarity (why it matched) with *lexical* overlap (Jaccard of the sentences' words), separating copied wording from genuine rewording. The **attribution** status ([CitationDetector](src/main/java/de/jplag/text/semantic/CitationDetector.java)) checks each matched query sentence for quotation marks or a citation — `(Author, 2020)`, `[3]`, a URL, or a DOI — so that acknowledged reuse is separated from unacknowledged reuse. Example: a student essay reusing three source sentences (one cited, one quoted, one bare) scores 74% overall but only **20% unattributed**.
+
+Caveat: attribution detection is a lightweight text heuristic. It cannot see footnote superscripts (lost in PDF extraction), does not verify a citation actually matches the reused source, and treats any quotation marks as a quote — so dialogue quotes can read as attribution. Treat the unattributed figure as a strong signal, not a verdict.
 
 It works at the **sentence** level via SBERT alignment (`--sentence-threshold` controls the cutoff), so it highlights *paraphrased* sentences, not only verbatim copies. Each query sentence is attributed to its single best-matching source, so identical sources are not double-counted. Requires the SBERT model (downloaded on first use); the report is a standalone `.html` file you open in any browser.
 

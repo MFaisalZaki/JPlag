@@ -58,6 +58,21 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testCitedMatchIsAttributedAndDeEmphasized() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        String html = generator.generate("q", "alpha copied line (Smith, 2020)", List.of(new ArchivedDocument("s", "alpha copied line")));
+        assertTrue(html.contains("class=\"match attributed\""), "A cited match should be marked attributed (de-emphasized)");
+    }
+
+    @Test
+    void testUncitedMatchIsUnattributed() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        String html = generator.generate("q", "alpha copied line with no source", List.of(new ArchivedDocument("s", "alpha copied line")));
+        assertTrue(html.contains("class=\"match\" style="), "An uncited match should stay a plain (unattributed) highlight");
+        assertFalse(html.contains("class=\"match attributed\""), "It must not be marked attributed");
+    }
+
+    @Test
     void testNoMatchesYieldsNoHighlights() {
         OriginalityReportGenerator generator = new OriginalityReportGenerator(0.99, STUB);
         String html = generator.generate("q", "beta one two|gamma three four", List.of(new ArchivedDocument("s", "alpha only")));
