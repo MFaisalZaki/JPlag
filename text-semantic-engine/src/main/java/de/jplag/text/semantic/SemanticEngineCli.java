@@ -60,6 +60,10 @@ public class SemanticEngineCli implements Callable<Integer> {
     @Option(names = "--extensions", split = ",", description = "Comma-separated file extensions to include (default: the text module's extensions).")
     private List<String> extensions;
 
+    @Option(names = "--recursive", description = "Treat every accepted file found recursively as its own submission, "
+            + "instead of combining each top-level sub-directory into one submission.")
+    private boolean recursive;
+
     @Override
     public Integer call() throws Exception {
         if (ensembleWeight != null && (ensembleWeight < 0.0 || ensembleWeight > 1.0)) {
@@ -74,7 +78,8 @@ public class SemanticEngineCli implements Callable<Integer> {
         }
         SemanticEngineConfiguration configuration = builder.build();
 
-        List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readSubmissions(rootDirectory);
+        SubmissionReader reader = new SubmissionReader(configuration);
+        List<AnalyzedSubmission> submissions = recursive ? reader.readDocuments(rootDirectory) : reader.readSubmissions(rootDirectory);
         if (submissions.size() < 2) {
             logger.warn("Need at least two non-empty submissions to compare, found {}.", submissions.size());
             return 1;

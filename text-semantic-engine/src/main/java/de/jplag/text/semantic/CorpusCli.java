@@ -26,9 +26,13 @@ import picocli.CommandLine.Parameters;
         CorpusCli.QueryCommand.class}, description = "Build and query a persistent index of documents for cross-referencing an archive.")
 public class CorpusCli implements Runnable {
 
-    private static SemanticEngineConfiguration defaultConfiguration() {
-        // Normalization must match between indexing and querying; both use these defaults.
-        return SemanticEngineConfiguration.builder().build();
+    private static SemanticEngineConfiguration configuration(List<String> extensions) {
+        // Normalization must match between indexing and querying; both use the builder defaults.
+        SemanticEngineConfiguration.Builder builder = SemanticEngineConfiguration.builder();
+        if (extensions != null && !extensions.isEmpty()) {
+            builder.fileExtensions(extensions);
+        }
+        return builder.build();
     }
 
     private static DocumentEmbedder noEmbedder() {
@@ -70,10 +74,14 @@ public class CorpusCli implements Runnable {
         @Option(names = "--author", defaultValue = "", description = "Author of these documents; enables self-plagiarism detection at query time.")
         private String author;
 
+        @Option(names = "--extensions", split = ",", description = "Comma-separated file extensions to include, searched "
+                + "recursively (with or without a leading dot). Default: the text module's extensions plus .pdf.")
+        private List<String> extensions;
+
         @Override
         public Integer call() throws Exception {
-            SemanticEngineConfiguration configuration = defaultConfiguration();
-            List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readSubmissions(documents);
+            SemanticEngineConfiguration configuration = configuration(extensions);
+            List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readDocuments(documents);
             try (DocumentEmbedder embedder = noEmbeddings ? noEmbedder() : new SbertEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 index.index(submissions, author);
@@ -119,10 +127,14 @@ public class CorpusCli implements Runnable {
                 + "author's indexed work are flagged as self-plagiarism.")
         private String queryAuthor;
 
+        @Option(names = "--extensions", split = ",", description = "Comma-separated file extensions to include, searched "
+                + "recursively (with or without a leading dot). Default: the text module's extensions plus .pdf.")
+        private List<String> extensions;
+
         @Override
         public Integer call() throws Exception {
-            SemanticEngineConfiguration configuration = defaultConfiguration();
-            List<AnalyzedSubmission> queries = new SubmissionReader(configuration).readSubmissions(queryDocuments);
+            SemanticEngineConfiguration configuration = configuration(extensions);
+            List<AnalyzedSubmission> queries = new SubmissionReader(configuration).readDocuments(queryDocuments);
             boolean needsSbert = backend != Backend.TFIDF || htmlReportDirectory != null;
             Path indexPath = indexDirectory.toPath();
             SbertEmbedder sbert = needsSbert ? new SbertEmbedder() : null;

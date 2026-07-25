@@ -87,6 +87,7 @@ mvn -pl text-semantic-engine exec:java \
 | `--[no-]remove-stopwords` | on | Drop English stop words. |
 | `--[no-]expand-synonyms` | on | Canonicalize synonyms via WordNet. |
 | `--extensions <a,b,…>` | text module's | Comma-separated file extensions to include. |
+| `--recursive` | off | Treat every accepted file found recursively as its own submission, instead of combining each top-level sub-directory into one submission. |
 | `-h`, `--help` | | Show help. |
 
 Disable a normalization step with its `--no-` form, e.g. `--no-expand-synonyms`.
@@ -154,7 +155,22 @@ mvn -pl text-semantic-engine exec:java -Dexec.mainClass=de.jplag.text.semantic.C
   -Dexec.args="query --index /path/to/index --query /path/to/new-docs --backend ENSEMBLE --top-k 10"
 ```
 
-Options: `--backend TFIDF|SBERT|ENSEMBLE` (BM25 / vector / RRF of both), `--top-k`, and `--no-embeddings` on `index` to build a lexical-only index without the model. Ensemble scores are RRF rank-fusion values (small, rank-based), not `[0,1]` similarities — the *ranking* is the signal.
+Both `index` and `query` walk the given directory **recursively** and treat **every accepted file as its own document** (named by its path relative to the root, e.g. `2024/essays/report.txt → 2024__essays__report`), so you can point them straight at a nested folder tree — no flattening needed. Restrict the file types with `--extensions txt,md,pdf` (comma-separated, leading dot optional); the default is the text module's extensions plus `.pdf`.
+
+Options: `--backend TFIDF|SBERT|ENSEMBLE` (BM25 / vector / RRF of both), `--top-k`, `--extensions`, and `--no-embeddings` on `index` to build a lexical-only index without the model. Ensemble scores are RRF rank-fusion values (small, rank-based), not `[0,1]` similarities — the *ranking* is the signal.
+
+### Extending the index with new documents
+
+The index is **incremental** — just run `index` again against the **same `--index` directory** with the new documents; they are appended, and the existing index is never rewritten:
+
+```bash
+# initial build
+CorpusCli index --index /path/to/index /path/to/archive
+# later: add more documents to the same index
+CorpusCli index --index /path/to/index /path/to/new-documents
+```
+
+Each document is keyed by its **id** (its path relative to the directory you point `index` at, e.g. `2024/essays/report.txt → 2024__essays__report`). So: a **new id is added**, and re-indexing a document with an **existing id updates it in place** (no duplicates) — which is also how you refresh a changed document. To avoid unintentionally overwriting an existing document, give new files a distinct name/relative path. Add in as many separate `index` calls as you like (useful for very large archives, or for tagging different batches with different `--author`).
 
 ### Self-plagiarism
 
