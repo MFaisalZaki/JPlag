@@ -1,7 +1,6 @@
 package de.jplag.text.semantic;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,15 +15,14 @@ import org.junit.jupiter.api.io.TempDir;
 import de.jplag.ParsingException;
 
 /**
- * Tests the two ingestion modes of {@link SubmissionReader}: JPlag-style {@code readSubmissions} and recursive,
- * document-per-file {@code readDocuments}.
+ * Tests {@link SubmissionReader}'s recursive, document-per-file ingestion.
  */
 class SubmissionReaderTest {
 
     private static final String TEXT = "The students purchased several large books for their difficult research project.";
 
     private static SubmissionReader reader() {
-        return new SubmissionReader(SemanticEngineConfiguration.builder().build());
+        return new SubmissionReader(SubmissionReader.defaultFileExtensions());
     }
 
     private static Set<String> names(List<AnalyzedSubmission> submissions) {
@@ -65,8 +63,7 @@ class SubmissionReaderTest {
         write(root.resolve("keep.log"), TEXT);
         write(root.resolve("drop.txt"), TEXT);
         // "log" is given without a leading dot on purpose: the reader should normalize it to ".log".
-        SemanticEngineConfiguration logsOnlyConfig = SemanticEngineConfiguration.builder().fileExtensions(List.of("log")).build();
-        SubmissionReader logsOnly = new SubmissionReader(logsOnlyConfig);
+        SubmissionReader logsOnly = new SubmissionReader(List.of("log"));
 
         List<AnalyzedSubmission> documents = logsOnly.readDocuments(root.toFile());
 
@@ -84,16 +81,4 @@ class SubmissionReaderTest {
         assertEquals(Set.of("2023__report", "2024__report"), names(documents));
     }
 
-    @Test
-    void readSubmissionsStillCombinesASubdirectoryIntoOneSubmission(@TempDir Path root) throws IOException, ParsingException {
-        write(root.resolve("single.txt"), TEXT);
-        write(root.resolve("folder/part1.txt"), TEXT);
-        write(root.resolve("folder/part2.txt"), TEXT);
-
-        List<AnalyzedSubmission> submissions = reader().readSubmissions(root.toFile());
-
-        assertEquals(2, submissions.size(), "a single file and a folder should each be one submission");
-        assertTrue(names(submissions).contains("folder"), "the folder submission keeps its directory name");
-        assertTrue(names(submissions).contains("single"), "the single-file submission drops its extension");
-    }
 }

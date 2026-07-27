@@ -34,18 +34,6 @@
 #                                   Embeddings rate any two sentences on the same topic
 #                                   highly, so lower values report shared subject matter
 #                                   rather than reuse.
-#   MIN_LEXICAL_OVERLAP=<0-1>       distinctive wording a match must share with its source,
-#                                   weighted by how rare each word is across the documents
-#                                   compared, so a cohort's topic vocabulary is not evidence.
-#                                   Default 0 uses similarity alone; 0.10 suppresses matches
-#                                   that share only their subject.
-#   MAX_SOURCE_FRACTION=<0-1>       share of candidate sources a passage may match before it
-#                                   counts as material they all share, eg a common citation.
-#                                   Default 1 disables; 0.75 suits a one-prompt cohort.
-#   BOILERPLATE=<include|exclude>   assignment cover sheets and academic-integrity
-#                                   declarations: 'include' (default) reports them like any
-#                                   other text; 'exclude' drops them, worth setting for a
-#                                   cohort sharing a cover sheet.
 #   NO_EMBEDDINGS=1                 lexical-only run (forces BACKEND=TFIDF, no HTML reports).
 #   AUTHOR_PATTERN=<regex>          derive each file's author from its file name (first capture
 #                                   group), e.g. '^([0-9]+)-' for '<studentid>-essay.pdf' names.
@@ -60,7 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -77,13 +65,9 @@ else
   TOP_K_ARG="$TOP_K"
 fi
 SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
-MIN_LEXICAL_OVERLAP="${MIN_LEXICAL_OVERLAP:-0}"
-MAX_SOURCE_FRACTION="${MAX_SOURCE_FRACTION:-1}"
-BOILERPLATE="${BOILERPLATE:-include}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
-[[ "$BOILERPLATE" == "exclude" || "$BOILERPLATE" == "include" ]] || die "BOILERPLATE must be 'exclude' or 'include', got '$BOILERPLATE'."
 
 require_java
 [[ -d "$DATASET_DIR" ]] || die "dataset directory not found: $DATASET_DIR"
@@ -146,20 +130,16 @@ INDEX_ARGS=(index --index "$INDEX_DIR" --extensions "$(extensions_csv)")
 INDEX_ARGS+=("$STAGING_DIR")
 java -cp "$JPLAG_CP" "$MAIN_CLASS" "${INDEX_ARGS[@]}"
 
-echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD," \
-     "min-lexical-overlap=$MIN_LEXICAL_OVERLAP, max-source-fraction=$MAX_SOURCE_FRACTION, boilerplate=$BOILERPLATE)…"
+echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD)…"
 [[ -n "$AUTHOR_PATTERN" ]] && echo ">> Authors derived via AUTHOR_PATTERN='$AUTHOR_PATTERN'; same-author matches: $SAME_AUTHOR."
 QUERY_ARGS=(query --index "$INDEX_DIR" --query "$DATASET_DIR"
             --backend "$BACKEND" --top-k "$TOP_K_ARG"
             --sentence-threshold "$SENTENCE_THRESHOLD"
-            --min-lexical-overlap "$MIN_LEXICAL_OVERLAP"
-            --max-source-fraction "$MAX_SOURCE_FRACTION"
             --extensions "$(extensions_csv)")
 if [[ -n "$AUTHOR_PATTERN" ]]; then
   QUERY_ARGS+=(--author-pattern "$AUTHOR_PATTERN")
   [[ "$SAME_AUTHOR" == "flag" ]] && QUERY_ARGS+=(--no-exclude-same-author)
 fi
-[[ "$BOILERPLATE" == "exclude" ]] && QUERY_ARGS+=(--exclude-boilerplate)
 [[ "$HTML_REPORTS" -eq 1 ]] && QUERY_ARGS+=(--html-report "$REPORTS_DIR")
 java -cp "$JPLAG_CP" "$MAIN_CLASS" "${QUERY_ARGS[@]}" | tee "$SUMMARY_FILE"
 

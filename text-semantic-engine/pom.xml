@@ -8,10 +8,10 @@
     </parent>
     <artifactId>text-semantic-engine</artifactId>
     <name>JPlag: Semantic Text Engine</name>
-    <description>Standalone, order-independent plagiarism engine for natural-language text. Unlike the token-based Greedy String
-        Tiling core, it compares documents by TF-IDF cosine similarity over WordNet-normalized terms, so it detects
-        paraphrasing that reorders or rewrites content. Reuses the text language module for tokenization and
-        normalization; it does not modify the JPlag comparison core.</description>
+    <description>Standalone plagiarism engine for natural-language text. It maintains a persistent Lucene index of an archive
+        (BM25 over WordNet-normalized terms plus SBERT document embeddings) and cross-references new documents against
+        it, producing a Turnitin-style HTML originality report per document. Reuses the text language module for
+        tokenization and normalization; it does not modify the JPlag comparison core.</description>
 
     <dependencies>
         <!-- Reused for tokenization + WordNet normalization (lemmatization, stop words, synonyms). -->
@@ -19,29 +19,18 @@
             <groupId>de.jplag</groupId>
             <artifactId>text</artifactId>
         </dependency>
-        <!-- Reused for the report format: ZipWriter and the report DTO records, so output opens in the JPlag report viewer. -->
-        <dependency>
-            <groupId>de.jplag</groupId>
-            <artifactId>jplag</artifactId>
-        </dependency>
         <dependency>
             <groupId>de.jplag</groupId>
             <artifactId>language-api</artifactId>
         </dependency>
 
-        <!-- JSON report output. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
-        <!-- Text extraction from PDF submissions. -->
+        <!-- Text extraction from PDF documents. -->
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
         </dependency>
 
-        <!-- Local SBERT sentence embeddings for the SBERT backend (Deep Java Library). -->
+        <!-- Local SBERT sentence embeddings (Deep Java Library). -->
         <!-- The PyTorch native runtime and the model are fetched automatically by DJL on first use. -->
         <dependency>
             <groupId>ai.djl</groupId>
@@ -82,12 +71,12 @@
 
     <build>
         <plugins>
-            <!-- Convenience: mvn -pl text-semantic-engine exec:java -Dexec.args="<submissions-directory>" -->
+            <!-- Convenience: mvn -pl text-semantic-engine exec:java -Dexec.args="<corpus-cli-arguments>" -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <configuration>
-                    <mainClass>de.jplag.text.semantic.SemanticEngineCli</mainClass>
+                    <mainClass>de.jplag.text.semantic.CorpusCli</mainClass>
                 </configuration>
             </plugin>
         </plugins>

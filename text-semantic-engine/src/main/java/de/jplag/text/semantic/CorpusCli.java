@@ -1,14 +1,16 @@
 package de.jplag.text.semantic;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import de.jplag.text.semantic.SemanticEngineConfiguration.Backend;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -16,37 +18,26 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 /**
- * Command line interface for building and querying a persistent corpus index, for cross-referencing a new document
+ * Command line interface for building and querying a persistent corpus index, for cross-referencing new documents
  * against a large archive of past documents.
  * <p>
  * Build/extend: {@code index --index INDEX_DIR DOCUMENTS}. Query:
- * {@code query --index INDEX_DIR --query NEW_DOCUMENTS --backend ENSEMBLE}.
+ * {@code query --index INDEX_DIR --query NEW_DOCUMENTS --html-report REPORTS}.
  */
 @Command(name = "jplag-corpus", mixinStandardHelpOptions = true, subcommands = {CorpusCli.IndexCommand.class,
         CorpusCli.QueryCommand.class}, description = "Build and query a persistent index of documents for cross-referencing an archive.")
 public class CorpusCli implements Runnable {
 
-    private static SemanticEngineConfiguration configuration(List<String> extensions) {
-        // Normalization must match between indexing and querying; both use the builder defaults.
-        SemanticEngineConfiguration.Builder builder = SemanticEngineConfiguration.builder();
-        if (extensions != null && !extensions.isEmpty()) {
-            builder.fileExtensions(extensions);
-        }
-        return builder.build();
+    private static final String EXTENSIONS_DESCRIPTION = "Comma-separated file extensions to include, searched recursively "
+            + "(with or without a leading dot). Default: the text module's extensions plus .pdf.";
+
+    private static SubmissionReader reader(List<String> extensions) {
+        return new SubmissionReader(extensions == null || extensions.isEmpty() ? SubmissionReader.defaultFileExtensions() : extensions);
     }
 
+    /** Stand-in for the SBERT embedder when only the lexical (BM25) signal is needed, so no model is loaded. */
     private static DocumentEmbedder noEmbedder() {
-        return new DocumentEmbedder() {
-            @Override
-            public float[] embed(String text) {
-                return new float[1];
-            }
-
-            @Override
-            public int dimension() {
-                return 1;
-            }
-        };
+        return text -> new float[1];
     }
 
     @Override
@@ -65,7 +56,7 @@ public class CorpusCli implements Runnable {
         @Option(names = "--index", required = true, description = "Directory holding the Lucene corpus index.")
         private File indexDirectory;
 
-        @Parameters(index = "0", description = "Directory of documents to add (each sub-directory or file is one document).")
+        @Parameters(index = "0", description = "Directory of documents to add; every accepted file below it is one document.")
         private File documents;
 
         @Option(names = "--no-embeddings", description = "Index only the lexical (BM25) field; skip SBERT embeddings and the model download.")
@@ -79,14 +70,12 @@ public class CorpusCli implements Runnable {
                 + "'<studentid>-essay.pdf'; files it does not match fall back to --author.")
         private String authorPattern;
 
-        @Option(names = "--extensions", split = ",", description = "Comma-separated file extensions to include, searched "
-                + "recursively (with or without a leading dot). Default: the text module's extensions plus .pdf.")
+        @Option(names = "--extensions", split = ",", description = EXTENSIONS_DESCRIPTION)
         private List<String> extensions;
 
         @Override
         public Integer call() throws Exception {
-            SemanticEngineConfiguration configuration = configuration(extensions);
-            List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readDocuments(documents);
+            List<AnalyzedSubmission> submissions = reader(extensions).readDocuments(documents);
             AuthorResolver authorResolver = new AuthorResolver(author, authorPattern);
             try (DocumentEmbedder embedder = noEmbeddings ? noEmbedder() : new SbertEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
@@ -108,7 +97,7 @@ public class CorpusCli implements Runnable {
         @Option(names = "--index", required = true, description = "Directory holding the Lucene corpus index.")
         private File indexDirectory;
 
-        @Option(names = "--query", required = true, description = "Directory of query documents (each sub-directory or file is one).")
+        @Option(names = "--query", required = true, description = "Directory of query documents; every accepted file below it is one.")
         private File queryDocuments;
 
         @Option(names = "--backend", defaultValue = "ENSEMBLE", description = "Retrieval signal: ${COMPLETION-CANDIDATES} "
@@ -130,24 +119,6 @@ public class CorpusCli implements Runnable {
                 + "shared subject matter rather than reuse. Default: ${DEFAULT-VALUE}.")
         private double sentenceThreshold;
 
-        @Option(names = "--min-lexical-overlap", defaultValue = "0", description = "Distinctive wording a match must share "
-                + "with its source, as a word overlap weighted by how rare each word is across the documents compared, so a "
-                + "cohort's shared topic vocabulary does not count as evidence. The default of 0 reports semantic similarity "
-                + "alone; 0.10 suppresses matches that share only their subject. Default: ${DEFAULT-VALUE}.")
-        private double minimumLexicalOverlap;
-
-        @Option(names = "--max-source-fraction", defaultValue = "1", description = "Share of the candidate sources a passage "
-                + "may match before it is treated as material they all share (a common citation, a standard definition) rather "
-                + "than reuse from any one of them. The default of 1 disables the check; 0.75 is a reasonable setting for a "
-                + "cohort answering one prompt. Default: ${DEFAULT-VALUE}.")
-        private double maximumSourceFraction;
-
-        @Option(names = "--exclude-boilerplate", negatable = true, defaultValue = "false", fallbackValue = "true", description = "Exclude "
-                + "administrative front matter — assignment cover sheets and academic-integrity declarations — from matching and "
-                + "from the word total. Off by default, so such text is reported like any other; worth enabling for a cohort that "
-                + "shares a cover sheet, since identical front matter matches near-perfectly and outranks genuine matches.")
-        private boolean excludeBoilerplate;
-
         @Option(names = "--show-attributed", description = "Also highlight quoted/cited matches (de-emphasized). By default "
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
@@ -167,23 +138,19 @@ public class CorpusCli implements Runnable {
                 + "--no-exclude-same-author to keep such matches, flagged as self-plagiarism instead.")
         private boolean excludeSameAuthor;
 
-        @Option(names = "--extensions", split = ",", description = "Comma-separated file extensions to include, searched "
-                + "recursively (with or without a leading dot). Default: the text module's extensions plus .pdf.")
+        @Option(names = "--extensions", split = ",", description = EXTENSIONS_DESCRIPTION)
         private List<String> extensions;
 
         @Override
         public Integer call() throws Exception {
-            SemanticEngineConfiguration configuration = configuration(extensions);
-            List<AnalyzedSubmission> queries = new SubmissionReader(configuration).readDocuments(queryDocuments);
+            List<AnalyzedSubmission> queries = reader(extensions).readDocuments(queryDocuments);
             AuthorResolver authorResolver = new AuthorResolver(queryAuthor, authorPattern);
             boolean needsSbert = backend != Backend.TFIDF || htmlReportDirectory != null;
-            Path indexPath = indexDirectory.toPath();
             SbertEmbedder sbert = needsSbert ? new SbertEmbedder() : null;
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
-                LuceneCorpusIndex index = new LuceneCorpusIndex(indexPath, embedder);
+                LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed, minimumLexicalOverlap,
-                                maximumSourceFraction, excludeBoilerplate);
+                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed);
                 // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
                 // results; it just no longer decides which documents get compared at all.
                 int comparedDocuments = topK > 0 ? topK : index.size();
@@ -191,34 +158,32 @@ public class CorpusCli implements Runnable {
                     System.out.printf("Comparing each query against all %d indexed document(s).%n", comparedDocuments);
                 }
                 for (AnalyzedSubmission query : queries) {
-                    String author = authorResolver.authorOf(query.name());
-                    List<CorpusMatch> matches = index.query(query, backend, comparedDocuments, excludeSameAuthor ? author : "");
-                    List<ArchivedDocument> sources = reportGenerator != null || !author.isBlank()
-                            ? index.documents(matches.stream().map(CorpusMatch::documentId).toList())
-                            : java.util.List.of();
-                    java.util.Map<String, String> authorOf = new java.util.HashMap<>();
-                    sources.forEach(source -> authorOf.put(source.id(), source.author()));
-
-                    System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);
-                    for (CorpusMatch match : matches) {
-                        boolean self = !author.isBlank() && author.equals(authorOf.get(match.documentId()));
-                        System.out.printf("  %.4f  %s%s%n", match.score(), match.documentId(), self ? "  [SELF-PLAGIARISM]" : "");
-                    }
-                    if (reportGenerator != null && htmlReportDirectory != null) {
-                        writeHtmlReport(reportGenerator, query, sources, author);
-                    }
+                    report(index, reportGenerator, query, authorResolver.authorOf(query.name()), comparedDocuments);
                 }
             }
             return 0;
         }
 
-        private void writeHtmlReport(OriginalityReportGenerator generator, AnalyzedSubmission query, List<ArchivedDocument> sources, String author)
-                throws java.io.IOException {
-            String html = generator.generate(query.name(), query.text(), sources, author);
-            java.nio.file.Files.createDirectories(htmlReportDirectory.toPath());
-            java.nio.file.Path output = htmlReportDirectory.toPath().resolve(query.name() + ".html");
-            java.nio.file.Files.writeString(output, html);
-            System.out.printf("  -> HTML report: %s%n", output.toAbsolutePath());
+        private void report(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query, String author,
+                int comparedDocuments) throws IOException {
+            List<CorpusMatch> matches = index.query(query, backend, comparedDocuments, excludeSameAuthor ? author : "");
+            List<ArchivedDocument> sources = generator != null || !author.isBlank()
+                    ? index.documents(matches.stream().map(CorpusMatch::documentId).toList())
+                    : List.of();
+            Map<String, String> authorOf = new HashMap<>();
+            sources.forEach(source -> authorOf.put(source.id(), source.author()));
+
+            System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);
+            for (CorpusMatch match : matches) {
+                boolean self = !author.isBlank() && author.equals(authorOf.get(match.documentId()));
+                System.out.printf("  %.4f  %s%s%n", match.score(), match.documentId(), self ? "  [SELF-PLAGIARISM]" : "");
+            }
+            if (generator != null && htmlReportDirectory != null) {
+                Files.createDirectories(htmlReportDirectory.toPath());
+                Path output = htmlReportDirectory.toPath().resolve(query.name() + ".html");
+                Files.writeString(output, generator.generate(query.name(), query.text(), sources, author));
+                System.out.printf("  -> HTML report: %s%n", output.toAbsolutePath());
+            }
         }
     }
 

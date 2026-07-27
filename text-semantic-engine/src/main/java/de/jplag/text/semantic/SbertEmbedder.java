@@ -14,9 +14,10 @@ import edu.stanford.nlp.pipeline.CoreSentence;
 import edu.stanford.nlp.pipeline.StanfordCoreNLP;
 
 /**
- * A long-lived SBERT embedder (all-MiniLM-L6-v2 via DJL) that keeps the model loaded so it can embed many documents,
- * e.g. while building or querying a corpus index. A document embedding is the mean of its sentence embeddings (CoreNLP
- * {@code ssplit}), L2-normalized. The model and PyTorch runtime download automatically on first use.
+ * A long-lived SBERT embedder (all-MiniLM-L6-v2 via DJL) that keeps the model loaded so it can embed many documents
+ * while building or querying a corpus index. Text is split into sentences (CoreNLP {@code ssplit}) and each sentence is
+ * embedded separately, since the model caps at ~256 tokens; a document embedding is the mean of its sentence
+ * embeddings, L2-normalized. The model and PyTorch runtime download automatically on first use.
  */
 public class SbertEmbedder implements DocumentEmbedder {
 
@@ -49,28 +50,7 @@ public class SbertEmbedder implements DocumentEmbedder {
     }
 
     /**
-     * Embeds every sentence of the text into a unit-length vector.
-     * @param text the document text.
-     * @return the sentence embeddings.
-     * @throws IllegalStateException if embedding fails.
-     */
-    public List<float[]> embedSentences(String text) {
-        List<float[]> vectors = new ArrayList<>();
-        CoreDocument document = sentencePipeline.processToCoreDocument(text);
-        for (CoreSentence sentence : document.sentences()) {
-            if (sentence.tokens().size() >= MINIMUM_SENTENCE_TOKENS) {
-                try {
-                    vectors.add(SbertBackend.normalize(predictor.predict(sentence.text())));
-                } catch (Exception exception) {
-                    throw new IllegalStateException("SBERT embedding failed.", exception);
-                }
-            }
-        }
-        return vectors;
-    }
-
-    /**
-     * Embeds every sentence of the text, keeping the sentence text alongside its vector.
+     * Embeds every sentence of the text, keeping the sentence text alongside its unit-length vector.
      * @param text the document text.
      * @return the embedded sentences.
      * @throws IllegalStateException if embedding fails.
@@ -80,11 +60,7 @@ public class SbertEmbedder implements DocumentEmbedder {
         CoreDocument document = sentencePipeline.processToCoreDocument(text);
         for (CoreSentence sentence : document.sentences()) {
             if (sentence.tokens().size() >= MINIMUM_SENTENCE_TOKENS) {
-                try {
-                    sentences.add(new EmbeddedSentence(sentence.text(), SbertBackend.normalize(predictor.predict(sentence.text()))));
-                } catch (Exception exception) {
-                    throw new IllegalStateException("SBERT embedding failed.", exception);
-                }
+                sentences.add(new EmbeddedSentence(sentence.text(), embedSentence(sentence.text())));
             }
         }
         return sentences;
@@ -92,19 +68,36 @@ public class SbertEmbedder implements DocumentEmbedder {
 
     @Override
     public float[] embed(String text) {
-        List<float[]> sentences = embedSentences(text);
         float[] sum = new float[dimension];
-        for (float[] vector : sentences) {
+        for (EmbeddedSentence sentence : embedSentencesWithText(text)) {
             for (int k = 0; k < dimension; k++) {
-                sum[k] += vector[k];
+                sum[k] += sentence.vector()[k];
             }
         }
-        return SbertBackend.normalize(sum);
+        return normalize(sum);
     }
 
-    @Override
-    public int dimension() {
-        return dimension;
+    private float[] embedSentence(String sentence) {
+        try {
+            return normalize(predictor.predict(sentence));
+        } catch (Exception exception) {
+            throw new IllegalStateException("SBERT embedding failed.", exception);
+        }
+    }
+
+    /** Scales a vector to unit length, so that a dot product of two such vectors is their cosine similarity. */
+    static float[] normalize(float[] vector) {
+        double norm = 0.0;
+        for (float value : vector) {
+            norm += value * value;
+        }
+        norm = Math.sqrt(norm);
+        if (norm > 0) {
+            for (int k = 0; k < vector.length; k++) {
+                vector[k] /= (float) norm;
+            }
+        }
+        return vector;
     }
 
     @Override

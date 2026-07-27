@@ -7,6 +7,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -19,7 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 import de.jplag.ParsingException;
 
 /**
- * Verifies that the engine ingests PDF submissions directly (extracting their text) instead of requiring an external
+ * Verifies that the engine ingests PDF documents directly (extracting their text) instead of requiring an external
  * conversion step.
  */
 class PdfIngestionTest {
@@ -40,22 +42,17 @@ class PdfIngestionTest {
     }
 
     @Test
-    void testPdfSubmissionsAreReadAndCompared(@TempDir Path root) throws IOException, ParsingException {
+    void testPdfDocumentsAreReadWithTheirTextAndTerms(@TempDir Path root) throws IOException, ParsingException {
         writePdf(root, "first", "The quick clever student purchased several large books.");
-        writePdf(root, "second", "The quick clever student purchased several large books.");
-        writePdf(root, "unrelated", "Volcanoes erupt when molten rock rises through the crust.");
+        writePdf(root, "second", "Volcanoes erupt when molten rock rises through the crust.");
 
-        SemanticEngineConfiguration configuration = SemanticEngineConfiguration.builder().similarityThreshold(0.0).build();
-        List<AnalyzedSubmission> submissions = new SubmissionReader(configuration).readSubmissions(root.toFile());
-        List<SubmissionPairSimilarity> results = new SemanticComparisonEngine(configuration).compare(submissions);
+        List<AnalyzedSubmission> documents = new SubmissionReader(SubmissionReader.defaultFileExtensions()).readDocuments(root.toFile());
 
-        assertEquals(3, submissions.size(), "All three PDF submissions should be read");
-        SubmissionPairSimilarity top = results.get(0);
-        assertTrue(
-                (top.firstSubmission().equals("first") && top.secondSubmission().equals("second"))
-                        || (top.firstSubmission().equals("second") && top.secondSubmission().equals("first")),
-                "The two identical PDFs should be the most similar pair");
-        assertTrue(top.similarity() > 0.9, "Identical PDF content should be near-identical, was " + top.similarity());
+        Set<String> names = documents.stream().map(AnalyzedSubmission::name).collect(Collectors.toSet());
+        assertEquals(Set.of("first", "second"), names, "Both PDFs should be ingested as documents");
+        AnalyzedSubmission first = documents.stream().filter(document -> document.name().equals("first")).findFirst().orElseThrow();
+        assertTrue(first.text().contains("student"), "The document text should be the extracted PDF text");
+        assertTrue(first.termFrequencies().containsKey("student"), "The extracted text should be tokenized into terms");
     }
 
     @Test

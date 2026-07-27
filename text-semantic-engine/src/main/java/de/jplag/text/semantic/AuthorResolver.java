@@ -7,15 +7,12 @@ import java.util.regex.Pattern;
  * Resolves a document's author from its document name, so that authors can differ per file within one batch (e.g. a
  * class-wide corpus where each file name starts with the student id).
  * <p>
- * A regex is applied to the file-name part of the document name (the segment after the last {@code __} path separator):
- * the first capture group — or the whole match, if the regex has no groups — is the author. Documents the regex does
- * not match fall back to the fixed author, which is also used when no regex is configured (the previous
- * one-author-per-batch behaviour).
+ * A regex is applied to the file-name part of the document name (the segment after the last
+ * {@link SubmissionReader#PATH_SEPARATOR}): the first capture group — or the whole match, if the regex has no groups —
+ * is the author. Documents the regex does not match fall back to the fixed author, which is also used when no regex is
+ * configured (one author per batch).
  */
 public class AuthorResolver {
-
-    /** The separator {@link SubmissionReader} uses to encode directories into document names. */
-    private static final String PATH_SEPARATOR = "__";
 
     private final String fixedAuthor;
     private final Pattern pattern;
@@ -46,15 +43,8 @@ public class AuthorResolver {
         return fixedAuthor;
     }
 
-    /**
-     * @return whether any author source is configured, i.e. whether {@link #authorOf(String)} can ever be non-empty.
-     */
-    public boolean isConfigured() {
-        return pattern != null || !fixedAuthor.isBlank();
-    }
-
     private static String fileNamePart(String documentName) {
-        int separator = documentName.lastIndexOf(PATH_SEPARATOR);
-        return separator < 0 ? documentName : documentName.substring(separator + PATH_SEPARATOR.length());
+        int separator = documentName.lastIndexOf(SubmissionReader.PATH_SEPARATOR);
+        return separator < 0 ? documentName : documentName.substring(separator + SubmissionReader.PATH_SEPARATOR.length());
     }
 }

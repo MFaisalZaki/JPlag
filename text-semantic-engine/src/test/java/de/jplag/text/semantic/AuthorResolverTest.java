@@ -1,8 +1,6 @@
 package de.jplag.text.semantic;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -53,8 +51,5 @@ class AuthorResolverTest {
     void testUnconfiguredResolverYieldsUnknownAuthor() {
         AuthorResolver resolver = new AuthorResolver("", "");
         assertEquals("", resolver.authorOf("240008189-Op-Ed-4959827"));
-        assertFalse(resolver.isConfigured());
-        assertTrue(new AuthorResolver("", STUDENT_ID_PATTERN).isConfigured());
-        assertTrue(new AuthorResolver("alice", "").isConfigured());
     }
 }

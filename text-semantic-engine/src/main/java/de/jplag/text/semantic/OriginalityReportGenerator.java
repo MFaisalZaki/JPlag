@@ -27,18 +27,8 @@ import java.util.function.Function;
  * By default only unattributed matches are highlighted and counted; when {@code excludeAttributed} is false, attributed
  * matches are also shown but de-emphasized.
  * <p>
- * Cosine similarity alone is not sufficient evidence of reuse, because sentence embeddings rate any two sentences on
- * the same topic highly whether or not either was copied. Three optional conditions therefore narrow what is reported,
- * each of which suppressed a distinct class of false positive observed on a real single-prompt cohort. Each can be
- * switched off through the constructor, and the callers that do so report every match above the similarity threshold:
- * <ul>
- * <li>administrative front matter is excluded entirely ({@link BoilerplateDetector}) — a shared cover sheet otherwise
- * matches near-perfectly and outranks every genuine match;</li>
- * <li>a passage matching most of the candidate sources is suppressed as common material, which is what a shared
- * citation or a standard definition looks like;</li>
- * <li>a match must share some distinctive wording with its source ({@link LexicalOverlap}), rarity-weighted so that the
- * cohort's own topic vocabulary does not count as evidence.</li>
- * </ul>
+ * Note that sentence embeddings rate any two sentences on one topic highly whether or not either was copied, so the
+ * threshold has to be set high (0.85 rather than 0.70) for similarity to mean reuse rather than shared subject matter.
  */
 public class OriginalityReportGenerator {
 
@@ -48,99 +38,39 @@ public class OriginalityReportGenerator {
      */
     private static final String SELF_REUSE_COLOUR = "#e1bee7";
 
-    /** Default share of the candidate sources a passage may match before it counts as common material. */
-    public static final double DEFAULT_MAXIMUM_SOURCE_FRACTION = 0.75;
-
-    /** Default minimum rarity-weighted word overlap required to corroborate a semantic match. */
-    public static final double DEFAULT_MINIMUM_LEXICAL_OVERLAP = 0.10;
-
-    /** Fewer candidate sources than this cannot establish that a passage is common material. */
-    private static final int MINIMUM_SOURCES_FOR_COMMONALITY = 3;
-
     private final double matchThreshold;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
     private final boolean excludeAttributed;
-    private final double minimumLexicalOverlap;
-    private final double maximumSourceFraction;
-    private final boolean excludeBoilerplate;
     /** Sentence embeddings per source document id, so a document shared by many queries is embedded once. */
     private final Map<String, List<EmbeddedSentence>> sentenceCache = new HashMap<>();
 
     /**
-     * Creates a generator that shows attributed matches (de-emphasized).
+     * Creates the generator.
      * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.85).
      * @param sentenceEmbedder splits a text into sentences and embeds them (e.g.
      * {@code SbertEmbedder::embedSentencesWithText}).
-     */
-    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder) {
-        this(matchThreshold, sentenceEmbedder, false);
-    }
-
-    /**
-     * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.85).
-     * @param sentenceEmbedder splits a text into sentences and embeds them.
      * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted (only concerns are shown).
      */
     public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed) {
-        this(matchThreshold, sentenceEmbedder, excludeAttributed, DEFAULT_MINIMUM_LEXICAL_OVERLAP, DEFAULT_MAXIMUM_SOURCE_FRACTION, true);
-    }
-
-    /**
-     * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.85).
-     * @param sentenceEmbedder splits a text into sentences and embeds them.
-     * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted (only concerns are shown).
-     * @param minimumLexicalOverlap the rarity-weighted word overlap a match must have with its source, in {@code [0, 1]};
-     * zero accepts matches that share no wording at all.
-     * @param maximumSourceFraction the share of candidate sources a passage may match before it is treated as common
-     * material rather than reuse, in {@code (0, 1]}; one disables the check.
-     * @param excludeBoilerplate if true, administrative front matter is excluded from matching and from the word total.
-     */
-    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed,
-            double minimumLexicalOverlap, double maximumSourceFraction, boolean excludeBoilerplate) {
         this.matchThreshold = matchThreshold;
         this.sentenceEmbedder = sentenceEmbedder;
         this.excludeAttributed = excludeAttributed;
-        this.minimumLexicalOverlap = minimumLexicalOverlap;
-        this.maximumSourceFraction = maximumSourceFraction;
-        this.excludeBoilerplate = excludeBoilerplate;
     }
 
     private record SourceDocument(String id, String author, List<EmbeddedSentence> sentences) {
     }
 
-    /** Why a passage that cleared the similarity threshold is nonetheless not reported as reuse. */
-    private enum Suppression {
-        /** Reported normally. */
-        NONE,
-        /** Matched most of the candidate sources, so it is shared material rather than something taken from one of them. */
-        COMMON,
-        /** Semantically similar but shares no distinctive wording with the source, i.e. the same topic, not the same text. */
-        UNCORROBORATED
-    }
-
     private record Attribution(String text, String sourceId, String sourceSentence, int sourceSentenceIndex, double score, MatchCategory category,
-            AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched, boolean boilerplate, int sourcesMatched,
-            Suppression suppression) {
+            AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched) {
 
-        // Whether this match should be highlighted and counted (a surviving match that is not an excluded attributed one).
+        // Whether this match should be highlighted and counted (a match that is not an excluded attributed one).
         boolean reported(boolean excludeAttributed) {
-            return matched && suppression == Suppression.NONE && !(excludeAttributed && attribution.isAttributed());
+            return matched && !(excludeAttributed && attribution.isAttributed());
         }
     }
 
     private record Totals(double overallPercent, double unattributedPercent, double attributedPercent, double excludedPercent,
             double selfReusePercent, Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource, int totalWords) {
-    }
-
-    /**
-     * Generates the HTML report without self-plagiarism detection (author unknown).
-     * @param queryId the query document's name.
-     * @param queryText the query document's text.
-     * @param sources the candidate source documents to attribute matches to.
-     * @return a complete, self-contained HTML document.
-     */
-    public String generate(String queryId, String queryText, List<ArchivedDocument> sources) {
-        return generate(queryId, queryText, sources, "");
     }
 
     /**
@@ -158,14 +88,7 @@ public class OriginalityReportGenerator {
             sourceDocuments.add(new SourceDocument(source.id(), source.author(), sentencesOf(source.id(), source.text())));
         }
 
-        // Word rarity is measured over the documents actually being compared, so each cohort's own topic vocabulary -
-        // which every submission shares and which therefore evidences nothing - is discounted automatically.
-        List<String> comparedTexts = new ArrayList<>();
-        comparedTexts.add(queryText);
-        sources.forEach(source -> comparedTexts.add(source.text()));
-        LexicalOverlap lexicalOverlap = LexicalOverlap.fromDocuments(comparedTexts);
-
-        List<Attribution> attributions = attribute(querySentences, sourceDocuments, queryAuthor, lexicalOverlap);
+        List<Attribution> attributions = attribute(querySentences, sourceDocuments, queryAuthor);
         Totals totals = totals(attributions);
 
         List<String> orderedSources = totals.wordsPerSource().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
@@ -190,93 +113,37 @@ public class OriginalityReportGenerator {
         return sentenceCache.computeIfAbsent(documentId, key -> sentenceEmbedder.apply(text));
     }
 
-    private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources, String queryAuthor,
-            LexicalOverlap lexicalOverlap) {
-        int commonalityCutoff = commonalityCutoff(sources.size());
+    private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources, String queryAuthor) {
         List<Attribution> attributions = new ArrayList<>();
         for (int i = 0; i < querySentences.size(); i++) {
             EmbeddedSentence querySentence = querySentences.get(i);
-            if (excludeBoilerplate && BoilerplateDetector.isBoilerplate(querySentence.text())) {
-                attributions
-                        .add(new Attribution(querySentence.text(), null, null, -1, 0.0, null, null, null, false, false, true, 0, Suppression.NONE));
-                continue;
-            }
             double bestScore = -1.0;
             String bestSource = null;
             String bestAuthor = "";
             String bestSentence = null;
             int bestIndex = -1;
-            int sourcesMatched = 0;
-            // Take each source's own best sentence, so how many sources carry this passage can be counted as well as
-            // which one carries it best. A passage present in most of them is shared material, not something reused
-            // from any one of them.
             for (SourceDocument source : sources) {
-                double sourceScore = -1.0;
-                String sourceSentence = null;
-                int sourceIndex = -1;
                 for (int candidateIndex = 0; candidateIndex < source.sentences().size(); candidateIndex++) {
                     EmbeddedSentence candidate = source.sentences().get(candidateIndex);
-                    if (excludeBoilerplate && BoilerplateDetector.isBoilerplate(candidate.text())) {
-                        continue;
+                    double similarity = cosine(querySentence.vector(), candidate.vector());
+                    if (similarity > bestScore) {
+                        bestScore = similarity;
+                        bestSource = source.id();
+                        bestAuthor = source.author();
+                        bestSentence = candidate.text();
+                        bestIndex = candidateIndex;
                     }
-                    double similarity = SbertBackend.cosine(querySentence.vector(), candidate.vector());
-                    if (similarity > sourceScore) {
-                        sourceScore = similarity;
-                        sourceSentence = candidate.text();
-                        sourceIndex = candidateIndex;
-                    }
-                }
-                if (sourceScore >= matchThreshold) {
-                    sourcesMatched++;
-                }
-                if (sourceScore > bestScore) {
-                    bestScore = sourceScore;
-                    bestSource = source.id();
-                    bestAuthor = source.author();
-                    bestSentence = sourceSentence;
-                    bestIndex = sourceIndex;
                 }
             }
             boolean matched = bestSentence != null && bestScore >= matchThreshold;
-            Suppression suppression = matched ? suppression(querySentence.text(), bestSentence, sourcesMatched, commonalityCutoff, lexicalOverlap)
-                    : Suppression.NONE;
             MatchCategory category = matched ? MatchCategory.fromWordOverlap(wordOverlap(querySentence.text(), bestSentence)) : null;
             String nextSentence = i + 1 < querySentences.size() ? querySentences.get(i + 1).text() : "";
             CitationDetector.AttributionCheck check = matched ? attributionWithLookahead(querySentence.text(), nextSentence) : null;
             boolean selfReuse = matched && !queryAuthor.isBlank() && queryAuthor.equals(bestAuthor);
             attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestIndex, bestScore, category,
-                    check == null ? null : check.status(), check == null ? null : check.evidence(), selfReuse, matched, false, sourcesMatched,
-                    suppression));
+                    check == null ? null : check.status(), check == null ? null : check.evidence(), selfReuse, matched));
         }
         return attributions;
-    }
-
-    /**
-     * Decides whether a passage that cleared the similarity threshold is really evidence of reuse. Commonality is tested
-     * first: material shared across the candidate sources is explained by a common origin, so there is no point asking
-     * whether it also shares wording.
-     */
-    private Suppression suppression(String querySentence, String sourceSentence, int sourcesMatched, int commonalityCutoff,
-            LexicalOverlap lexicalOverlap) {
-        if (sourcesMatched >= commonalityCutoff) {
-            return Suppression.COMMON;
-        }
-        if (lexicalOverlap.score(querySentence, sourceSentence) < minimumLexicalOverlap) {
-            return Suppression.UNCORROBORATED;
-        }
-        return Suppression.NONE;
-    }
-
-    /**
-     * The number of matching sources at which a passage counts as common material. Below
-     * {@value #MINIMUM_SOURCES_FOR_COMMONALITY} candidates there is no basis for the judgement, so the check is disabled
-     * rather than applied to too small a sample.
-     */
-    private int commonalityCutoff(int sourceCount) {
-        if (sourceCount < MINIMUM_SOURCES_FOR_COMMONALITY || maximumSourceFraction >= 1.0) {
-            return Integer.MAX_VALUE;
-        }
-        return Math.max(MINIMUM_SOURCES_FOR_COMMONALITY, (int) Math.ceil(maximumSourceFraction * sourceCount));
     }
 
     /**
@@ -293,8 +160,7 @@ public class OriginalityReportGenerator {
     }
 
     private Totals totals(List<Attribution> attributions) {
-        // Front matter is the institution's text, not the author's, so it is no part of the work being scored.
-        int totalWords = attributions.stream().filter(attribution -> !attribution.boilerplate()).mapToInt(a -> wordCount(a.text())).sum();
+        int totalWords = attributions.stream().mapToInt(attribution -> wordCount(attribution.text())).sum();
         Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
         Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
@@ -302,8 +168,7 @@ public class OriginalityReportGenerator {
         int excludedWords = 0;
         int selfReuseWords = 0;
         for (Attribution attribution : attributions) {
-            if (!attribution.matched() || attribution.suppression() != Suppression.NONE) {
-                // Not similar enough, or similar but common material / unsupported by any shared wording.
+            if (!attribution.matched()) {
                 continue;
             }
             int words = wordCount(attribution.text());
@@ -418,11 +283,9 @@ public class OriginalityReportGenerator {
                         + "(marked ✓) and is the actual plagiarism concern. ")
                 .append("Matches marked ↺ reuse the submitter's own prior work (self-plagiarism). Matches are semantic (SBERT, threshold ")
                 .append(String.format(Locale.ROOT, "%.2f", matchThreshold))
-                .append("); the type comes from literal word overlap. Passages are not reported when they appear across most of the candidate "
-                        + "sources (shared material such as a common citation) or share no distinctive wording with the source, since on a set of "
-                        + "documents about one subject similarity alone is expected and is not evidence of reuse; cover sheets and "
-                        + "academic-integrity declarations are excluded altogether. Click a highlight to jump to the matched passage in the source "
-                        + "below; click the passage to jump back.</footer>");
+                .append("); the type comes from literal word overlap. On a set of documents about one subject some similarity is expected, so "
+                        + "read a match as evidence only where the wording, not merely the subject, is shared. Click a highlight to jump to the "
+                        + "matched passage in the source below; click the passage to jump back.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -477,6 +340,15 @@ public class OriginalityReportGenerator {
         String self = attribution.selfReuse() ? "SELF-REUSE - " : "";
         return String.format(Locale.ROOT, "%s%s - %s - source %d %s (%.0f%% similar): %s -- Click to open the matched passage in the source.", self,
                 attribution.category().label(), status, rank, attribution.sourceId(), attribution.score() * 100, excerpt);
+    }
+
+    /** Cosine similarity of two unit-length embeddings, i.e. their dot product. */
+    private static double cosine(float[] first, float[] second) {
+        double dot = 0.0;
+        for (int k = 0; k < first.length; k++) {
+            dot += first[k] * second[k];
+        }
+        return dot;
     }
 
     /** Jaccard similarity of the two sentences' word sets, measuring literal word overlap. */

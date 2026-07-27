@@ -8,13 +8,4 @@ package de.jplag.text.semantic;
  * @param text the document's stored text.
  */
 public record ArchivedDocument(String id, String author, String text) {
-
-    /**
-     * Creates a document with an unknown author.
-     * @param id the document id.
-     * @param text the document's stored text.
-     */
-    public ArchivedDocument(String id, String text) {
-        this(id, "", text);
-    }
 }

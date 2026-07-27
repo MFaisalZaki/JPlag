@@ -65,41 +65,25 @@ Set a number only for a corpus too large to compare in full. Cost is roughly
 linear in the documents compared: each one's sentences are embedded once per run
 (cached across queries) and then compared against every query sentence. Note
 that a wider pool also gives a fixed `SENTENCE_THRESHOLD` more chances to be
-crossed by coincidence, so on a large corpus expect to raise the threshold or
-enable the filters below.
+crossed by coincidence, so on a large corpus expect to raise it.
 
 ### Keeping topical similarity out of the report
 
 Sentence embeddings score any two sentences on the same subject highly whether
 or not either was copied, so on a set of documents answering one prompt raw
-similarity reports the shared topic rather than reuse. **Every match is
-reported by default**; three optional filters narrow that down to passages with
-positive evidence of reuse:
+similarity reports the shared topic rather than reuse. The one control is
+`SENTENCE_THRESHOLD=<0-1>` (default `0.85`). Because the engine takes the best
+match over every sentence of every candidate source, that cutoff applies to a
+maximum over hundreds of comparisons — which is why it has to sit high: values
+near `0.7` are crossed by chance alone on same-topic prose. Measured on a
+26-submission single-prompt cohort, `0.70` reports 173 matches and `0.85`
+reports 31.
 
-- `SENTENCE_THRESHOLD=<0-1>` (default `0.85`) — the cosine cutoff, always
-  applied. Because the engine takes the best match over every sentence of every
-  candidate source, the cutoff applies to a maximum over hundreds of
-  comparisons; values near `0.7` are crossed by chance alone on same-topic
-  prose.
-- `MIN_LEXICAL_OVERLAP=<0-1>` (default `0`, i.e. off) — distinctive wording a
-  match must share with its source, weighted by how rare each word is across
-  the documents compared, so a cohort's own topic vocabulary counts for nothing
-  while rare wording counts for a lot. `0.10` drops matches that share only
-  their subject.
-- `MAX_SOURCE_FRACTION=<0-1>` (default `1`, i.e. off) — a passage present in
-  more than this share of the candidate sources is shared material (a common
-  citation, a stock definition) rather than something reused from any one of
-  them. `0.75` suits a cohort answering one prompt.
-- `BOILERPLATE=include|exclude` (default `include`) — `exclude` drops
-  assignment cover sheets and academic-integrity declarations from matching and
-  from the word total. Worth setting for a cohort that shares a cover sheet:
-  identical front matter matches near-perfectly and otherwise outranks every
-  genuine match.
-
-Filtered passages are left as plain, unhighlighted text rather than annotated,
-so a report does not distinguish "filtered" from "never similar". Measured on a
-26-submission single-prompt cohort, the defaults report 31 matches (17 of them
-the shared cover sheet); enabling all three filters leaves 3.
+Read a match as evidence only where the *wording*, not merely the subject, is
+shared: the report's category (copy-paste / lightly edited / paraphrase) comes
+from literal word overlap and is the signal to weigh. Note also that a cohort's
+shared assignment cover sheet matches near-perfectly and will dominate a report
+unless it is stripped from the documents beforehand.
 
 ## One-shot: check a self-contained dataset
 
@@ -116,8 +100,7 @@ on first use, creates a fresh index per run, and writes the same outputs as
 `run-plagiarism.sh` plus `summary.txt` — one line per document with its
 matched percentage and top source, most suspicious first.
 
-Options (env vars): `BACKEND`, `TOP_K`, `SENTENCE_THRESHOLD`,
-`MIN_LEXICAL_OVERLAP`, `MAX_SOURCE_FRACTION`, `BOILERPLATE` as above;
+Options (env vars): `BACKEND`, `TOP_K`, `SENTENCE_THRESHOLD` as above;
 `AUTHOR_PATTERN=<regex>` derives each file's author from its file name (first
 capture group), and `SAME_AUTHOR=exclude|flag` (default `exclude` here) then
 controls whether a file's matches to the **same author's** other files — e.g. a

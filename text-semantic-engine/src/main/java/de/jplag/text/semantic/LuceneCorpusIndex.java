@@ -27,13 +27,12 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-
-import de.jplag.text.semantic.SemanticEngineConfiguration.Backend;
 
 /**
  * A persistent, queryable corpus index backed by Apache Lucene, for cross-referencing a new document against a large
@@ -75,28 +74,8 @@ public class LuceneCorpusIndex {
     }
 
     /**
-     * Adds (or updates by id) the given documents to the index with an unknown author.
-     * @param documents the analyzed documents to index.
-     * @throws IOException if writing the index fails.
-     */
-    public void index(Collection<AnalyzedSubmission> documents) throws IOException {
-        index(documents, "");
-    }
-
-    /**
-     * Adds (or updates by id) the given documents to the index, attributing them all to the given author (used to detect or
-     * exclude same-author reuse at query time).
-     * @param documents the analyzed documents to index.
-     * @param author the author of these documents (empty if unknown).
-     * @throws IOException if writing the index fails.
-     */
-    public void index(Collection<AnalyzedSubmission> documents, String author) throws IOException {
-        index(documents, document -> author);
-    }
-
-    /**
-     * Adds (or updates by id) the given documents to the index, attributing each to its own author (used to detect or
-     * exclude same-author reuse at query time).
+     * Adds (or updates by id) the given documents, attributing each to its own author (used to detect or exclude
+     * same-author reuse at query time).
      * @param documents the analyzed documents to index.
      * @param authorOf resolves each document's author (empty if unknown).
      * @throws IOException if writing the index fails.
@@ -124,26 +103,14 @@ public class LuceneCorpusIndex {
     }
 
     /**
-     * Cross-references a query document against the index, returning the most similar archived documents.
-     * @param query the analyzed query document.
-     * @param backend which signal(s) to use: TFIDF (BM25), SBERT (vector), or ENSEMBLE (RRF of both).
-     * @param topK the number of matches to return.
-     * @return the matches, most similar first (excluding any document with the query's own id).
-     * @throws IOException if reading the index fails.
-     */
-    public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK) throws IOException {
-        return query(query, backend, topK, "");
-    }
-
-    /**
-     * Cross-references a query document against the index, returning the most similar archived documents while skipping
-     * everything the given author wrote. This extends the "never match a document against itself" rule to the author level,
-     * so resubmissions or prior work of the query's own author (stored under a different id) are not reported as sources.
+     * Cross-references a query document against the index, skipping the query's own id and everything the given author
+     * wrote. Excluding by author extends the "never match a document against itself" rule beyond the id, so a resubmission
+     * or earlier draft stored under a different id is not reported as a source.
      * @param query the analyzed query document.
      * @param backend which signal(s) to use: TFIDF (BM25), SBERT (vector), or ENSEMBLE (RRF of both).
      * @param topK the number of matches to return.
      * @param excludeAuthor the author whose documents to skip (empty to skip none).
-     * @return the matches, most similar first (excluding the query's own id and the excluded author's documents).
+     * @return the matches, most similar first.
      * @throws IOException if reading the index fails.
      */
     public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK, String excludeAuthor) throws IOException {
@@ -174,20 +141,35 @@ public class LuceneCorpusIndex {
                 TopDocs topDocs = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
                 if (topDocs.scoreDocs.length > 0) {
                     Document stored = storedFields.document(topDocs.scoreDocs[0].doc);
-                    String author = stored.get(FIELD_AUTHOR);
-                    String text = stored.get(FIELD_TEXT);
-                    documents.add(new ArchivedDocument(id, author == null ? "" : author, text == null ? "" : text));
+                    documents.add(new ArchivedDocument(id, orEmpty(stored.get(FIELD_AUTHOR)), orEmpty(stored.get(FIELD_TEXT))));
                 }
             }
         }
         return documents;
     }
 
+    /**
+     * @return the number of documents currently in the index.
+     * @throws IOException if reading the index fails.
+     */
+    public int size() throws IOException {
+        try (Directory directory = FSDirectory.open(indexDirectory)) {
+            if (!DirectoryReader.indexExists(directory)) {
+                return 0;
+            }
+            try (DirectoryReader reader = DirectoryReader.open(directory)) {
+                return reader.numDocs();
+            }
+        } catch (UncheckedIOException exception) {
+            throw exception.getCause();
+        }
+    }
+
     private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
         BooleanQuery.Builder builder = new BooleanQuery.Builder();
         query.termFrequencies().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(MAX_QUERY_TERMS)
                 .forEach(entry -> builder.add(new TermQuery(new Term(FIELD_TERMS, entry.getKey())), BooleanClause.Occur.SHOULD));
-        return search(searcher, builder.build(), topK, query.name(), excludeAuthor, "lexical");
+        return search(searcher, builder.build(), topK, query.name(), excludeAuthor);
     }
 
     private List<CorpusMatch> semantic(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
@@ -195,12 +177,11 @@ public class LuceneCorpusIndex {
         if (!isNonZero(vector)) {
             return List.of();
         }
-        int fetch = fetchSize(topK, excludeAuthor);
-        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, fetch), topK, query.name(), excludeAuthor, "semantic");
+        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, fetchSize(topK, excludeAuthor)), topK, query.name(), excludeAuthor);
     }
 
-    private List<CorpusMatch> search(IndexSearcher searcher, org.apache.lucene.search.Query query, int topK, String excludeId, String excludeAuthor,
-            String source) throws IOException {
+    private static List<CorpusMatch> search(IndexSearcher searcher, Query query, int topK, String excludeId, String excludeAuthor)
+            throws IOException {
         TopDocs topDocs = searcher.search(query, fetchSize(topK, excludeAuthor));
         StoredFields storedFields = searcher.storedFields();
         List<CorpusMatch> matches = new ArrayList<>();
@@ -209,7 +190,7 @@ public class LuceneCorpusIndex {
             String id = stored.get(FIELD_ID);
             boolean sameAuthor = !excludeAuthor.isBlank() && excludeAuthor.equals(stored.get(FIELD_AUTHOR));
             if (!id.equals(excludeId) && !sameAuthor) { // never match a document against itself or its author's other work
-                matches.add(new CorpusMatch(id, scoreDoc.score, source));
+                matches.add(new CorpusMatch(id, scoreDoc.score));
             }
             if (matches.size() == topK) {
                 break;
@@ -229,7 +210,7 @@ public class LuceneCorpusIndex {
         accumulateReciprocalRank(fused, semantic);
         return fused.entrySet().stream().filter(entry -> !entry.getKey().equals(excludeId))
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed()).limit(topK)
-                .map(entry -> new CorpusMatch(entry.getKey(), entry.getValue(), "ensemble")).toList();
+                .map(entry -> new CorpusMatch(entry.getKey(), entry.getValue())).toList();
     }
 
     private static void accumulateReciprocalRank(Map<String, Double> fused, List<CorpusMatch> ranking) {
@@ -257,20 +238,7 @@ public class LuceneCorpusIndex {
         return false;
     }
 
-    /**
-     * @return the number of documents currently in the index.
-     * @throws IOException if reading the index fails.
-     */
-    public int size() throws IOException {
-        try (Directory directory = FSDirectory.open(indexDirectory)) {
-            if (!DirectoryReader.indexExists(directory)) {
-                return 0;
-            }
-            try (DirectoryReader reader = DirectoryReader.open(directory)) {
-                return reader.numDocs();
-            }
-        } catch (UncheckedIOException exception) {
-            throw exception.getCause();
-        }
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
     }
 }
