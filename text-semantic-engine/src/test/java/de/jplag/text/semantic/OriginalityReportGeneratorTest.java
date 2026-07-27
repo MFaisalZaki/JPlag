@@ -125,5 +125,100 @@ class OriginalityReportGeneratorTest {
         String html = generator.generate("q", "beta one two|gamma three four", List.of(new ArchivedDocument("s", "alpha only")));
         assertTrue(html.contains("No matching sources found."), "With no matches the overview should say so");
         assertFalse(html.contains("class=\"match\""), "Nothing should be highlighted");
+        assertFalse(html.contains("Matched source passages"), "Without matches there is no passage section");
+    }
+
+    @Test
+    void testPassageCommonToMostSourcesIsNotReported() {
+        // The same passage appears in four of the five candidate sources, as a shared citation or a stock definition
+        // would; it cannot have been taken from any one of them, so it is common material rather than reuse.
+        List<ArchivedDocument> sources = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            sources.add(new ArchivedDocument("s" + i, i < 4 ? "alpha shared boilerplate clause" : "beta unrelated filler text"));
+        }
+        String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha shared boilerplate clause", sources);
+
+        assertFalse(html.contains("class=\"match\""), "A passage present in most sources should not be reported as reuse");
+        assertTrue(html.contains("Same topic only <b>100%</b>"), "It should be accounted for as filtered, not silently dropped");
+    }
+
+    @Test
+    void testPassageInFewSourcesIsStillReported() {
+        // The same wording, but confined to one source out of five: that is reuse, and must survive the commonality check.
+        List<ArchivedDocument> sources = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            sources.add(new ArchivedDocument("s" + i, i == 0 ? "alpha shared boilerplate clause" : "beta unrelated filler text"));
+        }
+        String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha shared boilerplate clause", sources);
+
+        assertTrue(html.contains("class=\"match\""), "A passage matching only one source is reuse and should be reported");
+        assertTrue(html.contains("s0"), "It should be attributed to that source");
+    }
+
+    @Test
+    void testSemanticMatchWithoutSharedWordingIsNotReported() {
+        // Four documents, so word rarity is measurable. The query sentence embeds identically to its source sentence but
+        // shares no wording with it: the same topic, not the same text.
+        List<ArchivedDocument> sources = List.of(new ArchivedDocument("s0", "alpha entirely separate vocabulary"),
+                new ArchivedDocument("s1", "beta padding one"), new ArchivedDocument("s2", "beta padding two"));
+        String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha unrelated distinct phrasing", sources);
+
+        assertFalse(html.contains("class=\"match\""), "Similarity with no shared wording is not evidence of reuse");
+        assertTrue(html.contains("Same topic only <b>100%</b>"), "It should be reported as filtered");
+    }
+
+    @Test
+    void testDisablingTheLexicalRequirementRestoresSemanticOnlyMatching() {
+        List<ArchivedDocument> sources = List.of(new ArchivedDocument("s0", "alpha entirely separate vocabulary"),
+                new ArchivedDocument("s1", "beta padding one"), new ArchivedDocument("s2", "beta padding two"));
+        String html = new OriginalityReportGenerator(0.9, STUB, false, 0.0, 1.0, true).generate("q", "alpha unrelated distinct phrasing", sources);
+
+        assertTrue(html.contains("class=\"match\""), "With the lexical requirement at zero, cosine similarity alone matches again");
+    }
+
+    @Test
+    void testCoverSheetIsExcludedFromMatchingAndFromTheWordTotal() {
+        // Both documents open with the same cover sheet; only the second sentence is the author's own writing.
+        String coverSheet = "STUDENT ID No: 240015513 MODULE CODE: SD2005 WORD COUNT: 788";
+        String html = new OriginalityReportGenerator(0.9, STUB).generate("q", coverSheet + "|alpha genuine copied line",
+                List.of(new ArchivedDocument("s", coverSheet + "|alpha genuine copied line")));
+
+        assertTrue(html.contains("<span>" + coverSheet + "</span>"), "The cover sheet should render as plain context, not as a match");
+        assertTrue(html.contains("Front matter <b>10 words</b>"), "The cover sheet's words should be reported as excluded front matter");
+        // The remaining sentence is the whole of the analysed text, so a match to it is 100% - not diluted by the cover sheet.
+        assertTrue(html.contains("Copy-paste <b>100%</b>"), "Front-matter words must not count towards the word total");
+    }
+
+    @Test
+    void testIntegrityDeclarationIsExcluded() {
+        String declaration = "I have read the University's Statement on Good Academic Practice and this work is my own";
+        String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha real content here|" + declaration,
+                List.of(new ArchivedDocument("s", "alpha real content here|" + declaration)));
+
+        assertTrue(html.contains("Front matter"), "The academic-integrity declaration should be treated as front matter");
+        assertTrue(html.contains("Copy-paste <b>100%</b>"), "Only the author's own writing should be scored");
+    }
+
+    @Test
+    void testIncludingBoilerplateRestoresTheOldBehaviour() {
+        String coverSheet = "STUDENT ID No: 240015513 MODULE CODE: SD2005 WORD COUNT: 788";
+        String html = new OriginalityReportGenerator(0.9, STUB, false, 0.0, 1.0, false).generate("q", coverSheet,
+                List.of(new ArchivedDocument("s", coverSheet)));
+
+        assertTrue(html.contains("class=\"match\""), "With boilerplate included, the cover sheet matches as before");
+    }
+
+    @Test
+    void testHighlightLinksToTheMatchedSourcePassageAndBack() {
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, STUB);
+        // The source's second sentence (index 1) is the matching one; its first stays unmatched context.
+        String html = generator.generate("q", "alpha sentence here", List.of(new ArchivedDocument("source-a", "unrelated beta text|alpha thing")));
+
+        assertTrue(html.contains("id=\"q0\"") && html.contains("href=\"#m-1-1\""), "The highlight should link to the matched source sentence");
+        assertTrue(html.contains("Matched source passages"), "The source's text should be rendered below the report");
+        assertTrue(html.contains("<a class=\"hit\" id=\"m-1-1\" href=\"#q0\""), "The matched passage should be anchored and link back");
+        assertTrue(html.contains(">alpha thing</a>"), "The matched source sentence should be the highlighted passage");
+        assertTrue(html.contains("<span>unrelated beta text</span>"), "Unmatched source sentences should render as plain context");
+        assertTrue(html.contains("id=\"src-1\""), "The sidebar's source entry should be able to link to the passage block");
     }
 }

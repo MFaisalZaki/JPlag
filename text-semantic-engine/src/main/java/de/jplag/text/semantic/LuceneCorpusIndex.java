@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.document.Document;
@@ -57,6 +58,8 @@ public class LuceneCorpusIndex {
     private static final int RRF_K = 60;
     /** Candidate pool retrieved from each ranker before fusion/truncation. */
     private static final int CANDIDATE_FACTOR = 5;
+    /** Extra candidates retrieved when an author is excluded, making room for that author's other documents. */
+    private static final int SAME_AUTHOR_HEADROOM = 10;
 
     private final Path indexDirectory;
     private final DocumentEmbedder embedder;
@@ -81,17 +84,28 @@ public class LuceneCorpusIndex {
     }
 
     /**
-     * Adds (or updates by id) the given documents to the index, attributing them to the given author (used to detect
-     * self-plagiarism at query time).
+     * Adds (or updates by id) the given documents to the index, attributing them all to the given author (used to detect or
+     * exclude same-author reuse at query time).
      * @param documents the analyzed documents to index.
      * @param author the author of these documents (empty if unknown).
      * @throws IOException if writing the index fails.
      */
     public void index(Collection<AnalyzedSubmission> documents, String author) throws IOException {
+        index(documents, document -> author);
+    }
+
+    /**
+     * Adds (or updates by id) the given documents to the index, attributing each to its own author (used to detect or
+     * exclude same-author reuse at query time).
+     * @param documents the analyzed documents to index.
+     * @param authorOf resolves each document's author (empty if unknown).
+     * @throws IOException if writing the index fails.
+     */
+    public void index(Collection<AnalyzedSubmission> documents, Function<AnalyzedSubmission, String> authorOf) throws IOException {
         try (Directory directory = FSDirectory.open(indexDirectory);
                 IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(new WhitespaceAnalyzer()))) {
             for (AnalyzedSubmission document : documents) {
-                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document, author));
+                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document, authorOf.apply(document)));
             }
         }
     }
@@ -118,13 +132,29 @@ public class LuceneCorpusIndex {
      * @throws IOException if reading the index fails.
      */
     public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK) throws IOException {
+        return query(query, backend, topK, "");
+    }
+
+    /**
+     * Cross-references a query document against the index, returning the most similar archived documents while skipping
+     * everything the given author wrote. This extends the "never match a document against itself" rule to the author level,
+     * so resubmissions or prior work of the query's own author (stored under a different id) are not reported as sources.
+     * @param query the analyzed query document.
+     * @param backend which signal(s) to use: TFIDF (BM25), SBERT (vector), or ENSEMBLE (RRF of both).
+     * @param topK the number of matches to return.
+     * @param excludeAuthor the author whose documents to skip (empty to skip none).
+     * @return the matches, most similar first (excluding the query's own id and the excluded author's documents).
+     * @throws IOException if reading the index fails.
+     */
+    public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK, String excludeAuthor) throws IOException {
         try (Directory directory = FSDirectory.open(indexDirectory); DirectoryReader reader = DirectoryReader.open(directory)) {
             IndexSearcher searcher = new IndexSearcher(reader);
             int candidates = topK * CANDIDATE_FACTOR;
             return switch (backend) {
-                case TFIDF -> lexical(searcher, query, topK);
-                case SBERT -> semantic(searcher, query, topK);
-                case ENSEMBLE -> fuse(lexical(searcher, query, candidates), semantic(searcher, query, candidates), topK, query.name());
+                case TFIDF -> lexical(searcher, query, topK, excludeAuthor);
+                case SBERT -> semantic(searcher, query, topK, excludeAuthor);
+                case ENSEMBLE -> fuse(lexical(searcher, query, candidates, excludeAuthor), semantic(searcher, query, candidates, excludeAuthor), topK,
+                        query.name());
             };
         }
     }
@@ -153,29 +183,32 @@ public class LuceneCorpusIndex {
         return documents;
     }
 
-    private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK) throws IOException {
+    private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
         BooleanQuery.Builder builder = new BooleanQuery.Builder();
         query.termFrequencies().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(MAX_QUERY_TERMS)
                 .forEach(entry -> builder.add(new TermQuery(new Term(FIELD_TERMS, entry.getKey())), BooleanClause.Occur.SHOULD));
-        return search(searcher, builder.build(), topK, query.name(), "lexical");
+        return search(searcher, builder.build(), topK, query.name(), excludeAuthor, "lexical");
     }
 
-    private List<CorpusMatch> semantic(IndexSearcher searcher, AnalyzedSubmission query, int topK) throws IOException {
+    private List<CorpusMatch> semantic(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
         float[] vector = embedder.embed(query.text());
         if (!isNonZero(vector)) {
             return List.of();
         }
-        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, topK + 1), topK, query.name(), "semantic");
+        int fetch = fetchSize(topK, excludeAuthor);
+        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, fetch), topK, query.name(), excludeAuthor, "semantic");
     }
 
-    private List<CorpusMatch> search(IndexSearcher searcher, org.apache.lucene.search.Query query, int topK, String excludeId, String source)
-            throws IOException {
-        TopDocs topDocs = searcher.search(query, topK + 1);
+    private List<CorpusMatch> search(IndexSearcher searcher, org.apache.lucene.search.Query query, int topK, String excludeId, String excludeAuthor,
+            String source) throws IOException {
+        TopDocs topDocs = searcher.search(query, fetchSize(topK, excludeAuthor));
         StoredFields storedFields = searcher.storedFields();
         List<CorpusMatch> matches = new ArrayList<>();
         for (ScoreDoc scoreDoc : topDocs.scoreDocs) {
-            String id = storedFields.document(scoreDoc.doc).get(FIELD_ID);
-            if (!id.equals(excludeId)) { // never match a document against itself
+            Document stored = storedFields.document(scoreDoc.doc);
+            String id = stored.get(FIELD_ID);
+            boolean sameAuthor = !excludeAuthor.isBlank() && excludeAuthor.equals(stored.get(FIELD_AUTHOR));
+            if (!id.equals(excludeId) && !sameAuthor) { // never match a document against itself or its author's other work
                 matches.add(new CorpusMatch(id, scoreDoc.score, source));
             }
             if (matches.size() == topK) {
@@ -183,6 +216,11 @@ public class LuceneCorpusIndex {
             }
         }
         return matches;
+    }
+
+    /** Documents to retrieve before exclusions: the query itself, plus headroom for the excluded author's other work. */
+    private static int fetchSize(int topK, String excludeAuthor) {
+        return topK + 1 + (excludeAuthor.isBlank() ? 0 : SAME_AUTHOR_HEADROOM);
     }
 
     private static List<CorpusMatch> fuse(List<CorpusMatch> lexical, List<CorpusMatch> semantic, int topK, String excludeId) {

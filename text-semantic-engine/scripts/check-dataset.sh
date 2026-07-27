@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+#
+# check-dataset.sh — plagiarism-check a dataset laid out as one directory of
+# original documents plus sub-directories of documents to test:
+#
+#     <dataset-dir>/
+#       report1.pdf            <- top-level files: indexed as the source corpus
+#       report2.pdf
+#       …
+#       plagiarised/           <- any sub-directory: checked against the corpus
+#         copy1.pdf
+#
+# The TOP-LEVEL files are indexed as the corpus; then EVERY accepted file in
+# the dataset (top-level and sub-directories alike) is checked against it, so
+# each file gets its own Turnitin-style HTML originality report. A top-level
+# file is never matched against itself (the engine excludes a query's own
+# index id), so its report only shows overlap with OTHER originals.
+#
+# Usage:
+#   scripts/check-dataset.sh <dataset-dir> <results-dir>
+#
+# Output (in <results-dir>):
+#   reports/<document>.html   one originality report per file
+#   matches.txt               ranked source matches per document
+#   summary.txt               each document's top match, highest score first
+#
+# Options (environment variables):
+#   BACKEND=<TFIDF|SBERT|ENSEMBLE>  retrieval signal (default: ENSEMBLE).
+#   TOP_K=<n>                       sources to consider per document (default: 5).
+#   SENTENCE_THRESHOLD=<0-1>        sentence match cutoff for the report (default: 0.85).
+#                                   Embeddings rate any two sentences on the same topic
+#                                   highly, so lower values report shared subject matter
+#                                   rather than reuse.
+#   MIN_LEXICAL_OVERLAP=<0-1>       distinctive wording a match must share with its source
+#                                   (default: 0.10), weighted by how rare each word is
+#                                   across the documents compared, so a cohort's topic
+#                                   vocabulary is not evidence. 0 uses similarity alone.
+#   MAX_SOURCE_FRACTION=<0-1>       share of candidate sources a passage may match before it
+#                                   counts as material they all share, eg a common citation
+#                                   (default: 0.75; 1 disables).
+#   BOILERPLATE=<exclude|include>   assignment cover sheets and academic-integrity
+#                                   declarations: 'exclude' (default) since they are
+#                                   identical across a cohort and match near-perfectly.
+#   NO_EMBEDDINGS=1                 lexical-only run (forces BACKEND=TFIDF, no HTML reports).
+#   AUTHOR_PATTERN=<regex>          derive each file's author from its file name (first capture
+#                                   group), e.g. '^([0-9]+)-' for '<studentid>-essay.pdf' names.
+#   SAME_AUTHOR=<exclude|flag>      with AUTHOR_PATTERN: 'exclude' (default) never matches a file
+#                                   against the same author's other files (so a resubmission of
+#                                   the same essay is not reported as plagiarism); 'flag' keeps
+#                                   such matches but renders them as self-reuse in the report.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+usage() { sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
+[[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
+
+DATASET_DIR="$1"
+RESULTS_DIR="$2"
+BACKEND="${BACKEND:-ENSEMBLE}"
+TOP_K="${TOP_K:-5}"
+SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
+MIN_LEXICAL_OVERLAP="${MIN_LEXICAL_OVERLAP:-0.10}"
+MAX_SOURCE_FRACTION="${MAX_SOURCE_FRACTION:-0.75}"
+BOILERPLATE="${BOILERPLATE:-exclude}"
+AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
+SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
+[[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
+[[ "$BOILERPLATE" == "exclude" || "$BOILERPLATE" == "include" ]] || die "BOILERPLATE must be 'exclude' or 'include', got '$BOILERPLATE'."
+
+require_java
+[[ -d "$DATASET_DIR" ]] || die "dataset directory not found: $DATASET_DIR"
+
+# Build the engine on first use so this stays a one-command workflow.
+if [[ ! -f "$CLASSPATH_FILE" ]]; then
+  echo ">> Engine not built yet — running scripts/build.sh first…"
+  "$SCRIPT_DIR/build.sh"
+fi
+load_classpath
+
+HTML_REPORTS=1
+if [[ -n "${NO_EMBEDDINGS:-}" ]]; then
+  [[ "$BACKEND" == "TFIDF" ]] || echo ">> NO_EMBEDDINGS=1: forcing BACKEND=TFIDF (was $BACKEND); HTML reports are skipped."
+  BACKEND=TFIDF
+  HTML_REPORTS=0
+fi
+
+# List the accepted files directly inside the dataset directory (the corpus).
+list_top_level_accepted() {
+  local ext find_expr=()
+  for ext in "${ACCEPTED_EXTENSIONS[@]}"; do
+    find_expr+=(-iname "*.${ext}" -o)
+  done
+  unset 'find_expr[${#find_expr[@]}-1]'
+  find "$DATASET_DIR" -maxdepth 1 -type f \( "${find_expr[@]}" \) -print0
+}
+
+print_accepted_extensions
+
+# The engine indexes a directory recursively, so the corpus (top-level files
+# only) is staged into a temporary directory. Staged names keep their relative
+# path (just the basename), so a top-level file gets the SAME document id when
+# indexed and when queried — which is what makes the self-exclusion work.
+STAGING_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGING_DIR"' EXIT
+
+CORPUS_COUNT=0
+while IFS= read -r -d '' file; do
+  cp "$file" "$STAGING_DIR/"
+  CORPUS_COUNT=$((CORPUS_COUNT + 1))
+done < <(list_top_level_accepted)
+[[ "$CORPUS_COUNT" -gt 0 ]] || die "no accepted files found at the top level of '$DATASET_DIR' — nothing to use as the corpus."
+
+TOTAL_COUNT="$(count_accepted_files "$DATASET_DIR")"
+echo ">> Corpus: $CORPUS_COUNT top-level file(s); checking $TOTAL_COUNT file(s) in total (sub-directories included)."
+
+mkdir -p "$RESULTS_DIR"
+INDEX_DIR="$RESULTS_DIR/index"
+REPORTS_DIR="$RESULTS_DIR/reports"
+SUMMARY_FILE="$RESULTS_DIR/matches.txt"
+TOP_MATCH_FILE="$RESULTS_DIR/summary.txt"
+# Fresh run: a stale index would keep documents whose files were since removed.
+rm -rf "$INDEX_DIR" "$REPORTS_DIR"
+
+echo ">> Indexing the corpus…"
+INDEX_ARGS=(index --index "$INDEX_DIR" --extensions "$(extensions_csv)")
+[[ -n "${NO_EMBEDDINGS:-}" ]] && INDEX_ARGS+=(--no-embeddings)
+[[ -n "$AUTHOR_PATTERN" ]] && INDEX_ARGS+=(--author-pattern "$AUTHOR_PATTERN")
+INDEX_ARGS+=("$STAGING_DIR")
+java -cp "$JPLAG_CP" "$MAIN_CLASS" "${INDEX_ARGS[@]}"
+
+echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD," \
+     "min-lexical-overlap=$MIN_LEXICAL_OVERLAP, max-source-fraction=$MAX_SOURCE_FRACTION, boilerplate=$BOILERPLATE)…"
+[[ -n "$AUTHOR_PATTERN" ]] && echo ">> Authors derived via AUTHOR_PATTERN='$AUTHOR_PATTERN'; same-author matches: $SAME_AUTHOR."
+QUERY_ARGS=(query --index "$INDEX_DIR" --query "$DATASET_DIR"
+            --backend "$BACKEND" --top-k "$TOP_K"
+            --sentence-threshold "$SENTENCE_THRESHOLD"
+            --min-lexical-overlap "$MIN_LEXICAL_OVERLAP"
+            --max-source-fraction "$MAX_SOURCE_FRACTION"
+            --extensions "$(extensions_csv)")
+if [[ -n "$AUTHOR_PATTERN" ]]; then
+  QUERY_ARGS+=(--author-pattern "$AUTHOR_PATTERN")
+  [[ "$SAME_AUTHOR" == "flag" ]] && QUERY_ARGS+=(--no-exclude-same-author)
+fi
+[[ "$BOILERPLATE" == "include" ]] && QUERY_ARGS+=(--include-boilerplate)
+[[ "$HTML_REPORTS" -eq 1 ]] && QUERY_ARGS+=(--html-report "$REPORTS_DIR")
+java -cp "$JPLAG_CP" "$MAIN_CLASS" "${QUERY_ARGS[@]}" | tee "$SUMMARY_FILE"
+
+# Condense the results into one line per document, most suspicious first.
+#
+# With HTML reports, each document's line carries the report's real number: the
+# percentage of its words matched (unattributed) to indexed sources, summed over
+# the per-source percentages in the report's sidebar, plus its top source.
+# Lexical-only runs have no reports, so they fall back to the backend's raw
+# retrieval score from matches.txt (an ordering, not a percentage).
+summarize_from_reports() {
+  local report
+  for report in "$REPORTS_DIR"/*.html; do
+    [[ -e "$report" ]] || continue
+    # One awk pass per report: sum the per-source percentages ("pct" spans) and
+    # take the first source in the sidebar ("sid" span) as the top source.
+    awk -v doc="$(basename "$report" .html)" '
+      {
+        line = $0
+        while (match(line, /class="pct">[0-9]+%/)) {
+          total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+          line = substr(line, RSTART + RLENGTH)
+        }
+        if (top == "" && match($0, /class="sid">(<a[^>]*>)?[^<]+/)) {
+          top = substr($0, RSTART, RLENGTH)
+          sub(/.*>/, "", top)
+        }
+      }
+      END {
+        if (top == "") top = "(no matches)"
+        gsub(/&amp;/, "\\&", top)
+        printf "%d%%\t%s\t%s\n", total, doc, top
+      }
+    ' "$report"
+  done | sort -t $'\t' -rn -k1,1
+}
+
+summarize_from_scores() {
+  awk '
+    function flush() { if (doc != "" && !have) printf "0.0000\t%s\t(no matches)\n", doc; doc = "" }
+    / -- top [0-9]+ matches \(/ {
+      flush()
+      doc = $0
+      sub(/ -- top [0-9]+ matches \(.*$/, "", doc)
+      have = 0
+      next
+    }
+    /^  [0-9][0-9.]*  / && doc != "" && !have {
+      src = $0
+      sub(/^[[:space:]]*[0-9.]+[[:space:]]+/, "", src)
+      printf "%s\t%s\t%s\n", $1, doc, src
+      have = 1
+    }
+    END { flush() }
+  ' "$SUMMARY_FILE" | sort -t $'\t' -rn -k1,1
+}
+
+{
+  if [[ "$HTML_REPORTS" -eq 1 ]]; then
+    printf 'matched\tdocument\ttop-source\n'
+    summarize_from_reports
+  else
+    printf 'top-score\tdocument\ttop-match\n'
+    summarize_from_scores
+  fi
+} | column -t -s $'\t' > "$TOP_MATCH_FILE"
+
+echo
+echo "Results saved to: $(abspath "$RESULTS_DIR")"
+echo "  at-a-glance    : $TOP_MATCH_FILE  (each document's top match, ranked)"
+echo "  ranked matches : $SUMMARY_FILE"
+if [[ "$HTML_REPORTS" -eq 1 ]]; then
+  echo "  HTML reports   : $REPORTS_DIR/  (one <document>.html per checked file)"
+fi

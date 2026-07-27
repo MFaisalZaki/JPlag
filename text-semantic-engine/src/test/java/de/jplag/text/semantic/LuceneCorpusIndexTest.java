@@ -96,4 +96,23 @@ class LuceneCorpusIndexTest {
         assertFalse(matches.stream().anyMatch(match -> match.documentId().equals("query")), "A document must not match itself");
         assertTrue(matches.stream().anyMatch(match -> match.documentId().equals("alpha-doc")));
     }
+
+    @Test
+    void testExcludedAuthorsDocumentsAreNotMatched() throws IOException {
+        // The author's earlier submission is a near-duplicate stored under a different id, so id exclusion cannot catch it.
+        index.index(List.of(document("alice-draft", "alpha", Map.of("alpha", 3, "common", 1))), "alice");
+        AnalyzedSubmission query = document("alice-final", "alpha", Map.of("alpha", 3, "common", 1));
+
+        List<CorpusMatch> unfiltered = index.query(query, Backend.ENSEMBLE, 5);
+        assertTrue(unfiltered.stream().anyMatch(match -> match.documentId().equals("alice-draft")),
+                "Without author exclusion the resubmission is a regular match");
+
+        for (Backend backend : Backend.values()) {
+            List<CorpusMatch> matches = index.query(query, backend, 5, "alice");
+            assertFalse(matches.stream().anyMatch(match -> match.documentId().equals("alice-draft")),
+                    "A document must not match its own author's other work (" + backend + ")");
+            assertTrue(matches.stream().anyMatch(match -> match.documentId().equals("alpha-doc")),
+                    "Other authors' documents must still match (" + backend + ")");
+        }
+    }
 }

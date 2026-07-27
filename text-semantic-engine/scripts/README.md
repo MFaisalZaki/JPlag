@@ -26,8 +26,12 @@ scripts/build-database.sh <docs-dir> <index-dir>
 Recursively indexes every accepted file under `<docs-dir>` into a searchable
 corpus at `<index-dir>`. Re-running appends (the index is incremental).
 
-Options (env vars): `AUTHOR=<name>` tags documents for self-plagiarism
-detection; `NO_EMBEDDINGS=1` builds a lexical-only index (no model download).
+Options (env vars): `AUTHOR=<name>` tags every document with one author;
+`AUTHOR_PATTERN=<regex>` derives each file's author from its file name instead
+(first capture group, e.g. `'^([0-9]+)-'` for `<studentid>-essay.pdf`, falling
+back to `AUTHOR` where it does not match) — either enables self-plagiarism
+handling at query time; `NO_EMBEDDINGS=1` builds a lexical-only index (no model
+download).
 
 ## 3. Run the plagiarism check
 
@@ -43,8 +47,63 @@ writes to `<results-dir>`:
 - `matches.txt` — the ranked source matches per document.
 
 Options (env vars): `BACKEND=TFIDF|SBERT|ENSEMBLE` (default `ENSEMBLE`),
-`TOP_K=<n>` (default 5), `SENTENCE_THRESHOLD=<0-1>` (default 0.7),
-`AUTHOR=<name>` (flag self-plagiarism).
+`TOP_K=<n>` (default 5), `SENTENCE_THRESHOLD=<0-1>` (default 0.85),
+`AUTHOR=<name>` / `AUTHOR_PATTERN=<regex>` (the query documents' author, one
+for all or derived per file as above), `SAME_AUTHOR=exclude|flag` (default
+`exclude`: matches to the query author's own indexed work are dropped
+entirely, so a resubmission of the same document is not reported at all;
+`flag` keeps them, marked as self-plagiarism).
+
+### Keeping topical similarity out of the report
+
+Sentence embeddings score any two sentences on the same subject highly whether
+or not either was copied, so on a set of documents answering one prompt raw
+similarity reports the shared topic rather than reuse. Three filters separate
+the two, each tunable:
+
+- `SENTENCE_THRESHOLD=<0-1>` (default `0.85`) — the cosine cutoff. Because the
+  engine takes the best match over every sentence of every candidate source,
+  the cutoff applies to a maximum over hundreds of comparisons; values near
+  `0.7` are crossed by chance alone on same-topic prose.
+- `MIN_LEXICAL_OVERLAP=<0-1>` (default `0.10`) — distinctive wording a match
+  must share with its source, weighted by how rare each word is across the
+  documents compared, so a cohort's own topic vocabulary counts for nothing
+  while rare wording counts for a lot. `0` reports semantic similarity alone.
+- `MAX_SOURCE_FRACTION=<0-1>` (default `0.75`) — a passage present in more than
+  this share of the candidate sources is shared material (a common citation, a
+  stock definition), not something reused from any one of them. `1` disables.
+- `BOILERPLATE=exclude|include` (default `exclude`) — assignment cover sheets
+  and academic-integrity declarations. Identical in every submission of a
+  cohort, so left in they match near-perfectly and outrank every genuine match;
+  excluded from the word total as well, so they do not dilute the percentage.
+
+Every report shows what these removed — a **Same topic only** percentage and a
+**Front matter** word count — so nothing is dropped silently. Loosen the
+filters if you want to inspect what was excluded.
+
+## One-shot: check a self-contained dataset
+
+```bash
+scripts/check-dataset.sh <dataset-dir> <results-dir>
+```
+
+For a dataset that is its own corpus: the files directly inside
+`<dataset-dir>` are indexed as the source pool, then **every** accepted file
+(top-level and sub-directories alike) is checked against it — so a layout of
+originals at the top level plus a sub-directory of suspect documents needs no
+separate index step. A file is never matched against itself. Builds the engine
+on first use, creates a fresh index per run, and writes the same outputs as
+`run-plagiarism.sh` plus `summary.txt` — one line per document with its
+matched percentage and top source, most suspicious first.
+
+Options (env vars): `BACKEND`, `TOP_K`, `SENTENCE_THRESHOLD`,
+`MIN_LEXICAL_OVERLAP`, `MAX_SOURCE_FRACTION`, `BOILERPLATE` as above;
+`AUTHOR_PATTERN=<regex>` derives each file's author from its file name (first
+capture group), and `SAME_AUTHOR=exclude|flag` (default `exclude` here) then
+controls whether a file's matches to the **same author's** other files — e.g. a
+resubmission of the same essay under a new name — are dropped entirely or shown
+as self-reuse; `NO_EMBEDDINGS=1` for a lexical-only offline run (no HTML
+reports; `summary.txt` then ranks by raw BM25 retrieval score).
 
 ## Example
 
