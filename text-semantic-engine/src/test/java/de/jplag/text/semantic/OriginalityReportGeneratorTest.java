@@ -1,10 +1,13 @@
 package de.jplag.text.semantic;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
@@ -139,7 +142,7 @@ class OriginalityReportGeneratorTest {
         String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha shared boilerplate clause", sources);
 
         assertFalse(html.contains("class=\"match\""), "A passage present in most sources should not be reported as reuse");
-        assertTrue(html.contains("Same topic only <b>100%</b>"), "It should be accounted for as filtered, not silently dropped");
+        assertTrue(html.contains("No matching sources found."), "With its only candidate filtered out, no source should be listed");
     }
 
     @Test
@@ -164,7 +167,7 @@ class OriginalityReportGeneratorTest {
         String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha unrelated distinct phrasing", sources);
 
         assertFalse(html.contains("class=\"match\""), "Similarity with no shared wording is not evidence of reuse");
-        assertTrue(html.contains("Same topic only <b>100%</b>"), "It should be reported as filtered");
+        assertTrue(html.contains("Paraphrase <b>0%</b>"), "Nothing should be counted towards the score");
     }
 
     @Test
@@ -184,8 +187,8 @@ class OriginalityReportGeneratorTest {
                 List.of(new ArchivedDocument("s", coverSheet + "|alpha genuine copied line")));
 
         assertTrue(html.contains("<span>" + coverSheet + "</span>"), "The cover sheet should render as plain context, not as a match");
-        assertTrue(html.contains("Front matter <b>10 words</b>"), "The cover sheet's words should be reported as excluded front matter");
-        // The remaining sentence is the whole of the analysed text, so a match to it is 100% - not diluted by the cover sheet.
+        // The remaining sentence is the whole of the analysed text, so a match to it is 100% - not diluted by the cover
+        // sheet's 10 words, which would otherwise put it at 29%.
         assertTrue(html.contains("Copy-paste <b>100%</b>"), "Front-matter words must not count towards the word total");
     }
 
@@ -195,7 +198,7 @@ class OriginalityReportGeneratorTest {
         String html = new OriginalityReportGenerator(0.9, STUB).generate("q", "alpha real content here|" + declaration,
                 List.of(new ArchivedDocument("s", "alpha real content here|" + declaration)));
 
-        assertTrue(html.contains("Front matter"), "The academic-integrity declaration should be treated as front matter");
+        assertTrue(html.contains("<span>" + declaration + "</span>"), "The declaration should render as plain context, not as a match");
         assertTrue(html.contains("Copy-paste <b>100%</b>"), "Only the author's own writing should be scored");
     }
 
@@ -206,6 +209,26 @@ class OriginalityReportGeneratorTest {
                 List.of(new ArchivedDocument("s", coverSheet)));
 
         assertTrue(html.contains("class=\"match\""), "With boilerplate included, the cover sheet matches as before");
+    }
+
+    @Test
+    void testSourceSentencesAreEmbeddedOnceAcrossReports() {
+        // Every query is compared against the same pool of sources, so re-embedding a source per query would be quadratic
+        // in the corpus size - and embedding, not comparing, is what a run spends its time on.
+        Map<String, Integer> embedCalls = new HashMap<>();
+        Function<String, List<EmbeddedSentence>> counting = text -> {
+            embedCalls.merge(text, 1, Integer::sum);
+            return STUB.apply(text);
+        };
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, counting);
+        List<ArchivedDocument> sources = List.of(new ArchivedDocument("shared", "alpha shared source"));
+
+        generator.generate("q1", "alpha first query", sources);
+        generator.generate("q2", "alpha second query", sources);
+
+        assertEquals(1, embedCalls.get("alpha shared source"), "The shared source should be embedded once, not once per query");
+        assertEquals(1, embedCalls.get("alpha first query"), "Each query's own text is embedded once");
+        assertEquals(1, embedCalls.get("alpha second query"), "Each query's own text is embedded once");
     }
 
     @Test

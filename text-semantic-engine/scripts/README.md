@@ -47,39 +47,59 @@ writes to `<results-dir>`:
 - `matches.txt` — the ranked source matches per document.
 
 Options (env vars): `BACKEND=TFIDF|SBERT|ENSEMBLE` (default `ENSEMBLE`),
-`TOP_K=<n>` (default 5), `SENTENCE_THRESHOLD=<0-1>` (default 0.85),
+`TOP_K=<n|all>` (default `all` — see below), `SENTENCE_THRESHOLD=<0-1>` (default 0.85),
 `AUTHOR=<name>` / `AUTHOR_PATTERN=<regex>` (the query documents' author, one
 for all or derived per file as above), `SAME_AUTHOR=exclude|flag` (default
 `exclude`: matches to the query author's own indexed work are dropped
 entirely, so a resubmission of the same document is not reported at all;
 `flag` keeps them, marked as self-plagiarism).
 
+### How many documents each query is compared against
+
+`TOP_K` decides the pool of archived documents a query is compared against
+sentence by sentence. A document outside that pool cannot be matched however
+similar it is, so `all` (the default) compares against the whole index and
+retrieval only *orders* the results rather than deciding what gets looked at.
+
+Set a number only for a corpus too large to compare in full. Cost is roughly
+linear in the documents compared: each one's sentences are embedded once per run
+(cached across queries) and then compared against every query sentence. Note
+that a wider pool also gives a fixed `SENTENCE_THRESHOLD` more chances to be
+crossed by coincidence, so on a large corpus expect to raise the threshold or
+enable the filters below.
+
 ### Keeping topical similarity out of the report
 
 Sentence embeddings score any two sentences on the same subject highly whether
 or not either was copied, so on a set of documents answering one prompt raw
-similarity reports the shared topic rather than reuse. Three filters separate
-the two, each tunable:
+similarity reports the shared topic rather than reuse. **Every match is
+reported by default**; three optional filters narrow that down to passages with
+positive evidence of reuse:
 
-- `SENTENCE_THRESHOLD=<0-1>` (default `0.85`) — the cosine cutoff. Because the
-  engine takes the best match over every sentence of every candidate source,
-  the cutoff applies to a maximum over hundreds of comparisons; values near
-  `0.7` are crossed by chance alone on same-topic prose.
-- `MIN_LEXICAL_OVERLAP=<0-1>` (default `0.10`) — distinctive wording a match
-  must share with its source, weighted by how rare each word is across the
-  documents compared, so a cohort's own topic vocabulary counts for nothing
-  while rare wording counts for a lot. `0` reports semantic similarity alone.
-- `MAX_SOURCE_FRACTION=<0-1>` (default `0.75`) — a passage present in more than
-  this share of the candidate sources is shared material (a common citation, a
-  stock definition), not something reused from any one of them. `1` disables.
-- `BOILERPLATE=exclude|include` (default `exclude`) — assignment cover sheets
-  and academic-integrity declarations. Identical in every submission of a
-  cohort, so left in they match near-perfectly and outrank every genuine match;
-  excluded from the word total as well, so they do not dilute the percentage.
+- `SENTENCE_THRESHOLD=<0-1>` (default `0.85`) — the cosine cutoff, always
+  applied. Because the engine takes the best match over every sentence of every
+  candidate source, the cutoff applies to a maximum over hundreds of
+  comparisons; values near `0.7` are crossed by chance alone on same-topic
+  prose.
+- `MIN_LEXICAL_OVERLAP=<0-1>` (default `0`, i.e. off) — distinctive wording a
+  match must share with its source, weighted by how rare each word is across
+  the documents compared, so a cohort's own topic vocabulary counts for nothing
+  while rare wording counts for a lot. `0.10` drops matches that share only
+  their subject.
+- `MAX_SOURCE_FRACTION=<0-1>` (default `1`, i.e. off) — a passage present in
+  more than this share of the candidate sources is shared material (a common
+  citation, a stock definition) rather than something reused from any one of
+  them. `0.75` suits a cohort answering one prompt.
+- `BOILERPLATE=include|exclude` (default `include`) — `exclude` drops
+  assignment cover sheets and academic-integrity declarations from matching and
+  from the word total. Worth setting for a cohort that shares a cover sheet:
+  identical front matter matches near-perfectly and otherwise outranks every
+  genuine match.
 
-Every report shows what these removed — a **Same topic only** percentage and a
-**Front matter** word count — so nothing is dropped silently. Loosen the
-filters if you want to inspect what was excluded.
+Filtered passages are left as plain, unhighlighted text rather than annotated,
+so a report does not distinguish "filtered" from "never similar". Measured on a
+26-submission single-prompt cohort, the defaults report 31 matches (17 of them
+the shared cover sheet); enabling all three filters leaves 3.
 
 ## One-shot: check a self-contained dataset
 

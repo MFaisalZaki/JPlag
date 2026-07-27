@@ -28,8 +28,9 @@ import java.util.function.Function;
  * matches are also shown but de-emphasized.
  * <p>
  * Cosine similarity alone is not sufficient evidence of reuse, because sentence embeddings rate any two sentences on
- * the same topic highly whether or not either was copied. Three further conditions therefore apply, each of which
- * suppressed a distinct class of false positive observed on a real single-prompt cohort:
+ * the same topic highly whether or not either was copied. Three optional conditions therefore narrow what is reported,
+ * each of which suppressed a distinct class of false positive observed on a real single-prompt cohort. Each can be
+ * switched off through the constructor, and the callers that do so report every match above the similarity threshold:
  * <ul>
  * <li>administrative front matter is excluded entirely ({@link BoilerplateDetector}) — a shared cover sheet otherwise
  * matches near-perfectly and outranks every genuine match;</li>
@@ -62,6 +63,8 @@ public class OriginalityReportGenerator {
     private final double minimumLexicalOverlap;
     private final double maximumSourceFraction;
     private final boolean excludeBoilerplate;
+    /** Sentence embeddings per source document id, so a document shared by many queries is embedded once. */
+    private final Map<String, List<EmbeddedSentence>> sentenceCache = new HashMap<>();
 
     /**
      * Creates a generator that shows attributed matches (de-emphasized).
@@ -126,8 +129,7 @@ public class OriginalityReportGenerator {
     }
 
     private record Totals(double overallPercent, double unattributedPercent, double attributedPercent, double excludedPercent,
-            double selfReusePercent, double suppressedPercent, Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource,
-            int totalWords, int boilerplateWords) {
+            double selfReusePercent, Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource, int totalWords) {
     }
 
     /**
@@ -153,7 +155,7 @@ public class OriginalityReportGenerator {
         List<EmbeddedSentence> querySentences = sentenceEmbedder.apply(queryText);
         List<SourceDocument> sourceDocuments = new ArrayList<>();
         for (ArchivedDocument source : sources) {
-            sourceDocuments.add(new SourceDocument(source.id(), source.author(), sentenceEmbedder.apply(source.text())));
+            sourceDocuments.add(new SourceDocument(source.id(), source.author(), sentencesOf(source.id(), source.text())));
         }
 
         // Word rarity is measured over the documents actually being compared, so each cohort's own topic vocabulary -
@@ -174,6 +176,18 @@ public class OriginalityReportGenerator {
         }
 
         return renderHtml(queryId, totals, attributions, sourceDocuments, orderedSources, rankOf, !queryAuthor.isBlank());
+    }
+
+    /**
+     * Embeds a source document's sentences, reusing the result if this generator has seen the document before.
+     * <p>
+     * Every query document is compared against the same pool of sources, so without this each document's sentences would be
+     * re-embedded once per query — quadratic in the corpus size, and the dominant cost of a run, since embedding is far
+     * more expensive than the cosine comparisons it feeds. Keyed by document id, which is unique per corpus and stable for
+     * the life of a run. Not thread-safe; generate one report at a time.
+     */
+    private List<EmbeddedSentence> sentencesOf(String documentId, String text) {
+        return sentenceCache.computeIfAbsent(documentId, key -> sentenceEmbedder.apply(text));
     }
 
     private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources, String queryAuthor,
@@ -281,23 +295,18 @@ public class OriginalityReportGenerator {
     private Totals totals(List<Attribution> attributions) {
         // Front matter is the institution's text, not the author's, so it is no part of the work being scored.
         int totalWords = attributions.stream().filter(attribution -> !attribution.boilerplate()).mapToInt(a -> wordCount(a.text())).sum();
-        int boilerplateWords = attributions.stream().filter(Attribution::boilerplate).mapToInt(a -> wordCount(a.text())).sum();
         Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
         Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
         int unattributedWords = 0;
         int excludedWords = 0;
         int selfReuseWords = 0;
-        int suppressedWords = 0;
         for (Attribution attribution : attributions) {
-            if (!attribution.matched()) {
+            if (!attribution.matched() || attribution.suppression() != Suppression.NONE) {
+                // Not similar enough, or similar but common material / unsupported by any shared wording.
                 continue;
             }
             int words = wordCount(attribution.text());
-            if (attribution.suppression() != Suppression.NONE) {
-                suppressedWords += words; // similar, but common material or unsupported by any shared wording
-                continue;
-            }
             if (!attribution.reported(excludeAttributed)) {
                 excludedWords += words; // an attributed match hidden by excludeAttributed
                 continue;
@@ -317,7 +326,7 @@ public class OriginalityReportGenerator {
         double overall = percent(matchedWords, totalWords);
         double unattributed = percent(unattributedWords, totalWords);
         return new Totals(overall, unattributed, overall - unattributed, percent(excludedWords, totalWords), percent(selfReuseWords, totalWords),
-                percent(suppressedWords, totalWords), wordsPerCategory, wordsPerSource, totalWords, boilerplateWords);
+                wordsPerCategory, wordsPerSource, totalWords);
     }
 
     /** Anchor of the highlighted query sentence at this attribution index (for jumping back from the source passage). */
@@ -356,11 +365,6 @@ public class OriginalityReportGenerator {
             html.append("<span class=\"grp\">Attribution:</span>");
             html.append(chip("#a5d6a7", "Quoted / cited", totals.attributedPercent()));
             html.append(chip("#ef5350", "Unattributed (concern)", totals.unattributedPercent()));
-        }
-        html.append("<span class=\"grp\">Filtered:</span>");
-        html.append(chip("#cfd8dc", "Same topic only", totals.suppressedPercent()));
-        if (totals.boilerplateWords() > 0) {
-            html.append(chipValue("#cfd8dc", "Front matter", totals.boilerplateWords() + " words"));
         }
         html.append("</div>");
 
@@ -414,12 +418,11 @@ public class OriginalityReportGenerator {
                         + "(marked ✓) and is the actual plagiarism concern. ")
                 .append("Matches marked ↺ reuse the submitter's own prior work (self-plagiarism). Matches are semantic (SBERT, threshold ")
                 .append(String.format(Locale.ROOT, "%.2f", matchThreshold))
-                .append("); the type comes from literal word overlap. <b>Same topic only</b> counts passages that were similar enough but were "
-                        + "not reported, because they appear across most of the candidate sources (shared material such as a common citation) or "
-                        + "share no distinctive wording with the source — on a set of documents about one subject, similarity alone is expected "
-                        + "and is not evidence of reuse. <b>Front matter</b> is the cover sheet and academic-integrity declaration, which are "
-                        + "identical in every submission and are excluded from the word total. Click a highlight to jump to the matched passage "
-                        + "in the source below; click the passage to jump back.</footer>");
+                .append("); the type comes from literal word overlap. Passages are not reported when they appear across most of the candidate "
+                        + "sources (shared material such as a common citation) or share no distinctive wording with the source, since on a set of "
+                        + "documents about one subject similarity alone is expected and is not evidence of reuse; cover sheets and "
+                        + "academic-integrity declarations are excluded altogether. Click a highlight to jump to the matched passage in the source "
+                        + "below; click the passage to jump back.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -458,11 +461,7 @@ public class OriginalityReportGenerator {
     }
 
     private static String chip(String colour, String label, double percent) {
-        return chipValue(colour, label, format(percent));
-    }
-
-    private static String chipValue(String colour, String label, String value) {
-        return "<span class=\"chip\"><span class=\"box\" style=\"background:" + colour + "\"></span>" + escape(label) + " <b>" + escape(value)
+        return "<span class=\"chip\"><span class=\"box\" style=\"background:" + colour + "\"></span>" + escape(label) + " <b>" + format(percent)
                 + "</b></span>";
     }
 

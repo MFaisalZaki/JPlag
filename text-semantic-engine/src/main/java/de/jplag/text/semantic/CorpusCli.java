@@ -115,7 +115,10 @@ public class CorpusCli implements Runnable {
                 + "(TFIDF=BM25, SBERT=vector, ENSEMBLE=both fused). Default: ${DEFAULT-VALUE}.")
         private Backend backend;
 
-        @Option(names = "--top-k", defaultValue = "10", description = "Number of matches to report per query document. Default: ${DEFAULT-VALUE}.")
+        @Option(names = "--top-k", defaultValue = "0", description = "Archived documents to compare each query against, most "
+                + "similar first. 0 (the default) compares against the whole index, so nothing is missed because retrieval "
+                + "ranked it low; retrieval then only orders the results. Set a limit for a corpus too large to compare in "
+                + "full — cost grows with the number of documents actually compared. Default: ${DEFAULT-VALUE}.")
         private int topK;
 
         @Option(names = "--html-report", description = "Directory to write a Turnitin-style HTML originality report per query "
@@ -127,20 +130,23 @@ public class CorpusCli implements Runnable {
                 + "shared subject matter rather than reuse. Default: ${DEFAULT-VALUE}.")
         private double sentenceThreshold;
 
-        @Option(names = "--min-lexical-overlap", defaultValue = "0.10", description = "Distinctive wording a match must share "
+        @Option(names = "--min-lexical-overlap", defaultValue = "0", description = "Distinctive wording a match must share "
                 + "with its source, as a word overlap weighted by how rare each word is across the documents compared, so a "
-                + "cohort's shared topic vocabulary does not count as evidence. 0 reports semantic similarity alone. " + "Default: ${DEFAULT-VALUE}.")
+                + "cohort's shared topic vocabulary does not count as evidence. The default of 0 reports semantic similarity "
+                + "alone; 0.10 suppresses matches that share only their subject. Default: ${DEFAULT-VALUE}.")
         private double minimumLexicalOverlap;
 
-        @Option(names = "--max-source-fraction", defaultValue = "0.75", description = "Share of the candidate sources a passage "
+        @Option(names = "--max-source-fraction", defaultValue = "1", description = "Share of the candidate sources a passage "
                 + "may match before it is treated as material they all share (a common citation, a standard definition) rather "
-                + "than reuse from any one of them. 1 disables the check. Default: ${DEFAULT-VALUE}.")
+                + "than reuse from any one of them. The default of 1 disables the check; 0.75 is a reasonable setting for a "
+                + "cohort answering one prompt. Default: ${DEFAULT-VALUE}.")
         private double maximumSourceFraction;
 
-        @Option(names = "--include-boilerplate", description = "Match and count administrative front matter — assignment cover "
-                + "sheets and academic-integrity declarations. Excluded by default: it is identical in every submission of a "
-                + "cohort, so it matches near-perfectly and outranks genuine matches.")
-        private boolean includeBoilerplate;
+        @Option(names = "--exclude-boilerplate", negatable = true, defaultValue = "false", fallbackValue = "true", description = "Exclude "
+                + "administrative front matter — assignment cover sheets and academic-integrity declarations — from matching and "
+                + "from the word total. Off by default, so such text is reported like any other; worth enabling for a cohort that "
+                + "shares a cover sheet, since identical front matter matches near-perfectly and outranks genuine matches.")
+        private boolean excludeBoilerplate;
 
         @Option(names = "--show-attributed", description = "Also highlight quoted/cited matches (de-emphasized). By default "
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
@@ -177,10 +183,16 @@ public class CorpusCli implements Runnable {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexPath, embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
                         : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed, minimumLexicalOverlap,
-                                maximumSourceFraction, !includeBoilerplate);
+                                maximumSourceFraction, excludeBoilerplate);
+                // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
+                // results; it just no longer decides which documents get compared at all.
+                int comparedDocuments = topK > 0 ? topK : index.size();
+                if (topK <= 0) {
+                    System.out.printf("Comparing each query against all %d indexed document(s).%n", comparedDocuments);
+                }
                 for (AnalyzedSubmission query : queries) {
                     String author = authorResolver.authorOf(query.name());
-                    List<CorpusMatch> matches = index.query(query, backend, topK, excludeSameAuthor ? author : "");
+                    List<CorpusMatch> matches = index.query(query, backend, comparedDocuments, excludeSameAuthor ? author : "");
                     List<ArchivedDocument> sources = reportGenerator != null || !author.isBlank()
                             ? index.documents(matches.stream().map(CorpusMatch::documentId).toList())
                             : java.util.List.of();

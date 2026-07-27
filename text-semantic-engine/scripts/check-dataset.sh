@@ -26,21 +26,26 @@
 #
 # Options (environment variables):
 #   BACKEND=<TFIDF|SBERT|ENSEMBLE>  retrieval signal (default: ENSEMBLE).
-#   TOP_K=<n>                       sources to consider per document (default: 5).
+#   TOP_K=<n|all>                   archived documents to compare each query against, most
+#                                   similar first. 'all' (default) compares against every
+#                                   indexed document, so nothing is missed because retrieval
+#                                   ranked it low. Set a number for a very large corpus.
 #   SENTENCE_THRESHOLD=<0-1>        sentence match cutoff for the report (default: 0.85).
 #                                   Embeddings rate any two sentences on the same topic
 #                                   highly, so lower values report shared subject matter
 #                                   rather than reuse.
-#   MIN_LEXICAL_OVERLAP=<0-1>       distinctive wording a match must share with its source
-#                                   (default: 0.10), weighted by how rare each word is
-#                                   across the documents compared, so a cohort's topic
-#                                   vocabulary is not evidence. 0 uses similarity alone.
+#   MIN_LEXICAL_OVERLAP=<0-1>       distinctive wording a match must share with its source,
+#                                   weighted by how rare each word is across the documents
+#                                   compared, so a cohort's topic vocabulary is not evidence.
+#                                   Default 0 uses similarity alone; 0.10 suppresses matches
+#                                   that share only their subject.
 #   MAX_SOURCE_FRACTION=<0-1>       share of candidate sources a passage may match before it
-#                                   counts as material they all share, eg a common citation
-#                                   (default: 0.75; 1 disables).
-#   BOILERPLATE=<exclude|include>   assignment cover sheets and academic-integrity
-#                                   declarations: 'exclude' (default) since they are
-#                                   identical across a cohort and match near-perfectly.
+#                                   counts as material they all share, eg a common citation.
+#                                   Default 1 disables; 0.75 suits a one-prompt cohort.
+#   BOILERPLATE=<include|exclude>   assignment cover sheets and academic-integrity
+#                                   declarations: 'include' (default) reports them like any
+#                                   other text; 'exclude' drops them, worth setting for a
+#                                   cohort sharing a cover sheet.
 #   NO_EMBEDDINGS=1                 lexical-only run (forces BACKEND=TFIDF, no HTML reports).
 #   AUTHOR_PATTERN=<regex>          derive each file's author from its file name (first capture
 #                                   group), e.g. '^([0-9]+)-' for '<studentid>-essay.pdf' names.
@@ -55,7 +60,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -63,11 +68,18 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 DATASET_DIR="$1"
 RESULTS_DIR="$2"
 BACKEND="${BACKEND:-ENSEMBLE}"
-TOP_K="${TOP_K:-5}"
+TOP_K="${TOP_K:-all}"
+# The engine takes 0 to mean "the whole index"; 'all' is just the readable spelling.
+if [[ "$TOP_K" == "all" ]]; then
+  TOP_K_ARG=0
+else
+  [[ "$TOP_K" =~ ^[0-9]+$ ]] || die "TOP_K must be a number or 'all', got '$TOP_K'."
+  TOP_K_ARG="$TOP_K"
+fi
 SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
-MIN_LEXICAL_OVERLAP="${MIN_LEXICAL_OVERLAP:-0.10}"
-MAX_SOURCE_FRACTION="${MAX_SOURCE_FRACTION:-0.75}"
-BOILERPLATE="${BOILERPLATE:-exclude}"
+MIN_LEXICAL_OVERLAP="${MIN_LEXICAL_OVERLAP:-0}"
+MAX_SOURCE_FRACTION="${MAX_SOURCE_FRACTION:-1}"
+BOILERPLATE="${BOILERPLATE:-include}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
@@ -138,7 +150,7 @@ echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-thre
      "min-lexical-overlap=$MIN_LEXICAL_OVERLAP, max-source-fraction=$MAX_SOURCE_FRACTION, boilerplate=$BOILERPLATE)…"
 [[ -n "$AUTHOR_PATTERN" ]] && echo ">> Authors derived via AUTHOR_PATTERN='$AUTHOR_PATTERN'; same-author matches: $SAME_AUTHOR."
 QUERY_ARGS=(query --index "$INDEX_DIR" --query "$DATASET_DIR"
-            --backend "$BACKEND" --top-k "$TOP_K"
+            --backend "$BACKEND" --top-k "$TOP_K_ARG"
             --sentence-threshold "$SENTENCE_THRESHOLD"
             --min-lexical-overlap "$MIN_LEXICAL_OVERLAP"
             --max-source-fraction "$MAX_SOURCE_FRACTION"
@@ -147,7 +159,7 @@ if [[ -n "$AUTHOR_PATTERN" ]]; then
   QUERY_ARGS+=(--author-pattern "$AUTHOR_PATTERN")
   [[ "$SAME_AUTHOR" == "flag" ]] && QUERY_ARGS+=(--no-exclude-same-author)
 fi
-[[ "$BOILERPLATE" == "include" ]] && QUERY_ARGS+=(--include-boilerplate)
+[[ "$BOILERPLATE" == "exclude" ]] && QUERY_ARGS+=(--exclude-boilerplate)
 [[ "$HTML_REPORTS" -eq 1 ]] && QUERY_ARGS+=(--html-report "$REPORTS_DIR")
 java -cp "$JPLAG_CP" "$MAIN_CLASS" "${QUERY_ARGS[@]}" | tee "$SUMMARY_FILE"
 
