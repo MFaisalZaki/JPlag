@@ -143,69 +143,13 @@ fi
 [[ "$HTML_REPORTS" -eq 1 ]] && QUERY_ARGS+=(--html-report "$REPORTS_DIR")
 java -cp "$JPLAG_CP" "$MAIN_CLASS" "${QUERY_ARGS[@]}" | tee "$SUMMARY_FILE"
 
-# Condense the results into one line per document, most suspicious first.
-#
-# With HTML reports, each document's line carries the report's real number: the
-# percentage of its words matched (unattributed) to indexed sources, summed over
-# the per-source percentages in the report's sidebar, plus its top source.
-# Lexical-only runs have no reports, so they fall back to the backend's raw
-# retrieval score from matches.txt (an ordering, not a percentage).
-summarize_from_reports() {
-  local report
-  for report in "$REPORTS_DIR"/*.html; do
-    [[ -e "$report" ]] || continue
-    # One awk pass per report: sum the per-source percentages ("pct" spans) and
-    # take the first source in the sidebar ("sid" span) as the top source.
-    awk -v doc="$(basename "$report" .html)" '
-      {
-        line = $0
-        while (match(line, /class="pct">[0-9]+%/)) {
-          total += substr(line, RSTART + 12, RLENGTH - 13) + 0
-          line = substr(line, RSTART + RLENGTH)
-        }
-        if (top == "" && match($0, /class="sid">(<a[^>]*>)?[^<]+/)) {
-          top = substr($0, RSTART, RLENGTH)
-          sub(/.*>/, "", top)
-        }
-      }
-      END {
-        if (top == "") top = "(no matches)"
-        gsub(/&amp;/, "\\&", top)
-        printf "%d%%\t%s\t%s\n", total, doc, top
-      }
-    ' "$report"
-  done | sort -t $'\t' -rn -k1,1
-}
-
-summarize_from_scores() {
-  awk '
-    function flush() { if (doc != "" && !have) printf "0.0000\t%s\t(no matches)\n", doc; doc = "" }
-    / -- top [0-9]+ matches \(/ {
-      flush()
-      doc = $0
-      sub(/ -- top [0-9]+ matches \(.*$/, "", doc)
-      have = 0
-      next
-    }
-    /^  [0-9][0-9.]*  / && doc != "" && !have {
-      src = $0
-      sub(/^[[:space:]]*[0-9.]+[[:space:]]+/, "", src)
-      printf "%s\t%s\t%s\n", $1, doc, src
-      have = 1
-    }
-    END { flush() }
-  ' "$SUMMARY_FILE" | sort -t $'\t' -rn -k1,1
-}
-
-{
-  if [[ "$HTML_REPORTS" -eq 1 ]]; then
-    printf 'matched\tdocument\ttop-source\n'
-    summarize_from_reports
-  else
-    printf 'top-score\tdocument\ttop-match\n'
-    summarize_from_scores
-  fi
-} | column -t -s $'\t' > "$TOP_MATCH_FILE"
+# Condense the results into one line per document, most suspicious first
+# (summary helpers live in common.sh, shared with run-all-courseworks.sh).
+if [[ "$HTML_REPORTS" -eq 1 ]]; then
+  write_summary_table "$REPORTS_DIR" "$SUMMARY_FILE" "$TOP_MATCH_FILE"
+else
+  write_summary_table "" "$SUMMARY_FILE" "$TOP_MATCH_FILE"
+fi
 
 echo
 echo "Results saved to: $(abspath "$RESULTS_DIR")"

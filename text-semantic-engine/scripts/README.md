@@ -1,6 +1,6 @@
 # Plagiarism scripts
 
-Three shell scripts that wrap the semantic text engine into a simple
+Shell scripts that wrap the semantic text engine into a simple
 build → index → check workflow. The engine walks each given directory
 **recursively** and keeps only the extensions listed in [`common.sh`](common.sh)
 (`ACCEPTED_EXTENSIONS`, default: `txt asc tex md rtf csv wiki json yaml yml xml pdf`),
@@ -107,6 +107,59 @@ controls whether a file's matches to the **same author's** other files — e.g. 
 resubmission of the same essay under a new name — are dropped entirely or shown
 as self-reuse; `NO_EMBEDDINGS=1` for a lexical-only offline run (no HTML
 reports; `summary.txt` then ranks by raw BM25 retrieval score).
+
+## Batch: a whole term of modules and courseworks
+
+```bash
+scripts/run-all-courseworks.sh <dataset-root> <output-root>
+```
+
+For a tree of `<module>/<coursework>/` directories, each holding its submissions
+plus a `warned/` sub-directory. Every coursework is checked **entirely on its
+own** — its own index, its own reports, no cross-module comparison — and the
+output mirrors the input layout:
+
+```
+<output-root>/
+  <module>/<coursework>/
+    reports/<document>.html   one originality report per submission
+    matches.txt               ranked source matches per submission
+    summary.txt               each submission's matched % and top source
+    run.log                   full engine output for this coursework
+    index/                    the coursework's index (KEEP_INDEX=0 to drop it)
+  stats.csv                   one row per coursework
+  stats.txt                   the same as a table, with per-module and overall averages
+  run.log
+```
+
+Everything under a coursework is both indexed **and** checked, `warned/`
+included, so warned submissions are compared against the regular ones *and*
+against each other. `AUTHOR_PATTERN` (default `'^([0-9]+)-'`, matching
+`<studentid>-<assignment>-<submissionid>.pdf`) identifies each file's author so
+that a student's own resubmission is not reported as plagiarism.
+
+`stats.txt` records wall time and peak memory per coursework, then averages
+them per module and overall — peak RSS comes from `/usr/bin/time -l`, which
+reports the JVM's usage rather than the wrapper shell's.
+
+Options (env vars): `BACKEND`, `TOP_K`, `SENTENCE_THRESHOLD`, `AUTHOR_PATTERN`,
+`SAME_AUTHOR` as above, plus `KEEP_INDEX=0` to delete each index after use,
+`RESUME=1` to skip courseworks already recorded in `stats.csv` (their statistics
+are preserved, so an interrupted run can be continued), and `ONLY=<pattern>` to
+restrict the run, e.g. `ONLY='SD2005/*'`.
+
+## Container
+
+The whole workflow — engine, Java runtime and SBERT model — packs into a single
+Apptainer image whose entry point is `run-all-courseworks.sh`, so a cluster run
+needs nothing installed on the host:
+
+```bash
+text-semantic-engine/apptainer/build-image.sh          # once, needs network
+apptainer run plagiarism-check.sif ./2025_6 ./results  # offline from here on
+```
+
+See [`../apptainer/README.md`](../apptainer/README.md).
 
 ## Example
 

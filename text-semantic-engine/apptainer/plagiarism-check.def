@@ -1,0 +1,208 @@
+#
+# plagiarism-check.def — the semantic text engine, its Java runtime, and its
+# SBERT model packed into one Apptainer image.
+#
+# Build it from the REPOSITORY ROOT (the %files paths below are relative to the
+# build's working directory):
+#
+#     apptainer build text-semantic-engine/apptainer/plagiarism-check.sif \
+#                     text-semantic-engine/apptainer/plagiarism-check.def
+#
+# or just run text-semantic-engine/apptainer/build-image.sh, which does that for
+# you. The build needs network access; the finished image does not — the SBERT
+# model and the PyTorch runtime are downloaded once here and baked in.
+#
+# Build on the architecture you will run on: the PyTorch native library baked in
+# below is picked to match the CPU doing the building, so an image built on an
+# ARM laptop will not run on an x86_64 cluster.
+#
+# Run it: the image takes a directory of modules and writes the results.
+#
+#     apptainer run plagiarism-check.sif <dataset-root> <output-root>
+#
+Bootstrap: docker
+From: eclipse-temurin:25-jdk
+
+%labels
+    Application  plagiarism-check
+    Description  Coursework plagiarism checking with the JPlag semantic text engine
+    Engine       de.jplag.text.semantic.CorpusCli
+    Model        sentence-transformers/all-MiniLM-L6-v2 (baked in)
+
+%help
+    Plagiarism-check a whole term of coursework, one independent check per
+    coursework, entirely offline.
+
+        apptainer run plagiarism-check.sif <dataset-root> <output-root>
+
+    <dataset-root> is a directory of modules, two levels deep:
+
+        <dataset-root>/<module>/<coursework>/<studentid>-<name>-<id>.pdf
+                                            warned/<studentid>-...pdf
+
+    <output-root> (default: ./results) mirrors that layout, and holds an
+    originality report per submission plus timing/memory statistics:
+
+        <output-root>/<module>/<coursework>/reports/<document>.html
+                                            matches.txt summary.txt run.log
+                      stats.csv  stats.txt  run.log
+
+    Both paths must be visible inside the container. Apptainer mounts your home
+    directory and the current directory automatically; anything else needs
+    --bind, e.g.
+
+        apptainer run --bind /data:/data plagiarism-check.sif /data/2025_6 /data/results
+
+    Tuning (environment variables, all optional — see `apptainer run-help`
+    output of the script itself with `apptainer exec <image> run-all-courseworks.sh --help`):
+
+        BACKEND=TFIDF|SBERT|ENSEMBLE   retrieval signal (default ENSEMBLE)
+        TOP_K=<n|all>                  sources compared against (default all)
+        SENTENCE_THRESHOLD=<0-1>       sentence match cutoff (default 0.85)
+        AUTHOR_PATTERN=<regex>         author from the file name (default '^([0-9]+)-')
+        SAME_AUTHOR=exclude|flag       a student's own earlier work (default exclude)
+        KEEP_INDEX=0                   drop each coursework's index afterwards
+        RESUME=1                       continue an interrupted run
+        ONLY=<pattern>                 e.g. ONLY='SD2005/*'
+        JAVA_TOOL_OPTIONS=-Xmx8g       JVM heap, if the default quarter of RAM is thin
+
+    Pass them with --env, which works whether or not your host exports them:
+
+        apptainer run --env ONLY='SD2005/*',KEEP_INDEX=0 plagiarism-check.sif ...
+
+    The other engine scripts are on PATH inside the image and can be used
+    directly: build-database.sh, run-plagiarism.sh, check-dataset.sh.
+
+%files
+    # Every Maven module the reactor reads, whether or not it is built: `-am`
+    # compiles only text-semantic-engine and what it depends on, but Maven still
+    # parses every <module> listed in the aggregator POM. report-viewer and
+    # website are not Maven modules and are deliberately left out.
+    pom.xml                 /opt/jplag/
+    cli                     /opt/jplag/
+    core                    /opt/jplag/
+    coverage-report         /opt/jplag/
+    endtoend-testing        /opt/jplag/
+    language-api            /opt/jplag/
+    language-antlr-utils    /opt/jplag/
+    language-testutils      /opt/jplag/
+    languages               /opt/jplag/
+    text-semantic-engine    /opt/jplag/
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    # What the scripts shell out to: GNU time (per-coursework wall time and peak
+    # RSS), column (the summary and statistics tables), awk.
+    apt-get update
+    apt-get install -y --no-install-recommends time gawk bsdextrautils curl ca-certificates
+    rm -rf /var/lib/apt/lists/*
+
+    # Maven, pinned and fetched from the permanent archive so the image builds
+    # the same way next year. It is deleted again at the end of this section.
+    MAVEN_VERSION=3.9.9
+    curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+        | tar -xz -C /opt
+    export PATH="/opt/apache-maven-${MAVEN_VERSION}/bin:${PATH}"
+
+    # Any target/ directory copied in from the host holds host paths — in
+    # particular a runtime-classpath.txt pointing at the host's Maven repository.
+    find /opt/jplag -type d -name target -prune -exec rm -rf {} +
+
+    export DJL_CACHE_DIR=/opt/djl-cache
+    mkdir -p "$DJL_CACHE_DIR"
+
+    chmod +x /opt/jplag/text-semantic-engine/scripts/*.sh
+    /opt/jplag/text-semantic-engine/scripts/build.sh
+
+    # Freeze the classpath into the image. build.sh points it at the throwaway
+    # Maven repository under /root/.m2; copying the jars to a fixed location lets
+    # that repository, and Maven with it, be deleted.
+    mvn -f /opt/jplag/pom.xml -pl text-semantic-engine -q \
+        dependency:copy-dependencies -DoutputDirectory=/opt/jplag/lib -DincludeScope=runtime
+    echo '/opt/jplag/text-semantic-engine/target/classes:/opt/jplag/lib/*' \
+        > /opt/jplag/text-semantic-engine/target/runtime-classpath.txt
+
+    rm -rf "/opt/apache-maven-${MAVEN_VERSION}" /root/.m2
+    # The compiled engine and the jars in /opt/jplag/lib are all that is needed
+    # from here on; the other modules' sources are ~100 MB of dead weight.
+    rm -rf /opt/jplag/cli /opt/jplag/core /opt/jplag/coverage-report \
+           /opt/jplag/endtoend-testing /opt/jplag/language-api \
+           /opt/jplag/language-antlr-utils /opt/jplag/language-testutils \
+           /opt/jplag/languages /opt/jplag/text-semantic-engine/src
+
+    # ----------------------------------------------------------------------
+    # Bake in the SBERT model and the PyTorch native runtime. DJL fetches both
+    # on first use; doing that here, into an in-image cache, is what makes the
+    # finished container work on a node with no internet access.
+    # ----------------------------------------------------------------------
+    mkdir -p /tmp/warmup/DEMO/CW1
+    cat > /tmp/warmup/DEMO/CW1/1001-warmup-1.txt <<'DOCUMENT'
+    The mitochondrion is the powerhouse of the cell. It generates most of the
+    chemical energy needed to power the cell's biochemical reactions. Energy is
+    stored in a small molecule called adenosine triphosphate.
+DOCUMENT
+    cat > /tmp/warmup/DEMO/CW1/1002-warmup-1.txt <<'DOCUMENT'
+    The mitochondrion is the powerhouse of the cell. Most of the chemical energy
+    that powers a cell's biochemical reactions is generated there. That energy is
+    held in a small molecule known as adenosine triphosphate.
+DOCUMENT
+    /opt/jplag/text-semantic-engine/scripts/run-all-courseworks.sh /tmp/warmup /tmp/warmup-out
+
+    # Prove the cache is complete: rerun with DJL forbidden from reaching the
+    # network, which is how the image runs from now on. A miss fails the build
+    # here rather than on the cluster.
+    export DJL_OFFLINE=true
+    rm -rf /tmp/warmup-out
+    /opt/jplag/text-semantic-engine/scripts/run-all-courseworks.sh /tmp/warmup /tmp/warmup-out
+    rm -rf /tmp/warmup /tmp/warmup-out
+
+    chmod -R a+rX /opt/jplag /opt/djl-cache
+
+%environment
+    # The DJL cache lives in the image, not in $HOME — Apptainer mounts the
+    # host's home over the container's, so the default ~/.djl.ai would miss the
+    # baked-in model and try to download it again.
+    export DJL_CACHE_DIR="${DJL_CACHE_DIR:-/opt/djl-cache}"
+    export DJL_OFFLINE="${DJL_OFFLINE:-true}"
+    export PATH="/opt/jplag/text-semantic-engine/scripts:${PATH}"
+    export LANG="${LANG:-C.UTF-8}"
+    export LC_ALL="${LC_ALL:-C.UTF-8}"
+
+%runscript
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        exec /opt/jplag/text-semantic-engine/scripts/run-all-courseworks.sh --help
+    fi
+    if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+        echo "usage: apptainer run <image>.sif <dataset-root> [output-root]" >&2
+        echo "       output-root defaults to ./results." >&2
+        echo "       Options are environment variables, e.g." >&2
+        echo "           apptainer run --env ONLY='SD2005/*',KEEP_INDEX=0 <image>.sif ..." >&2
+        echo "       See 'apptainer run-help <image>.sif' and '<image>.sif --help'." >&2
+        exit 2
+    fi
+    exec /opt/jplag/text-semantic-engine/scripts/run-all-courseworks.sh "$1" "${2:-./results}"
+
+%test
+    set -e
+    echo ">> checking the engine starts and the model loads offline…"
+    work="$(mktemp -d)"
+    mkdir -p "$work/data/DEMO/CW1/warned"
+    cat > "$work/data/DEMO/CW1/1001-essay-1.txt" <<'DOCUMENT'
+    Photosynthesis converts light energy into chemical energy stored in sugars.
+    Chlorophyll in the chloroplasts absorbs light, mainly in the blue and red
+    parts of the spectrum. The resulting sugars feed the rest of the plant.
+DOCUMENT
+    cat > "$work/data/DEMO/CW1/warned/1002-essay-1.txt" <<'DOCUMENT'
+    Photosynthesis converts light energy into chemical energy stored in sugars.
+    Light is absorbed by chlorophyll inside the chloroplasts, mostly in the blue
+    and red parts of the spectrum. Those sugars then feed the rest of the plant.
+DOCUMENT
+    /opt/jplag/text-semantic-engine/scripts/run-all-courseworks.sh "$work/data" "$work/out"
+    test -s "$work/out/stats.txt"
+    test -s "$work/out/DEMO/CW1/summary.txt"
+    test -d "$work/out/DEMO/CW1/reports"
+    grep -q ',ok$' "$work/out/stats.csv" || { echo "the demo coursework did not complete"; exit 1; }
+    rm -rf "$work"
+    echo ">> ok"

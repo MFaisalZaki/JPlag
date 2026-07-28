@@ -75,3 +75,77 @@ print_accepted_extensions() {
   local IFS=' '
   echo "accepted extensions: ${ACCEPTED_EXTENSIONS[*]}"
 }
+
+# --------------------------------------------------------------------------
+# At-a-glance summary: one line per checked document, most suspicious first.
+#
+# With HTML reports each line carries the report's real number — the percentage
+# of the document's words matched (unattributed) to indexed sources, summed over
+# the per-source percentages in the report's sidebar — plus its top source.
+# Lexical-only runs have no reports, so they fall back to the backend's raw
+# retrieval score from the ranked-match output (an ordering, not a percentage).
+# --------------------------------------------------------------------------
+
+# summarize_from_reports <reports-dir>
+summarize_from_reports() {
+  local reports_dir="$1" report
+  for report in "$reports_dir"/*.html; do
+    [[ -e "$report" ]] || continue
+    # One awk pass per report: sum the per-source percentages ("pct" spans) and
+    # take the first source in the sidebar ("sid" span) as the top source.
+    awk -v doc="$(basename "$report" .html)" '
+      {
+        line = $0
+        while (match(line, /class="pct">[0-9]+%/)) {
+          total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+          line = substr(line, RSTART + RLENGTH)
+        }
+        if (top == "" && match($0, /class="sid">(<a[^>]*>)?[^<]+/)) {
+          top = substr($0, RSTART, RLENGTH)
+          sub(/.*>/, "", top)
+        }
+      }
+      END {
+        if (top == "") top = "(no matches)"
+        gsub(/&amp;/, "\\&", top)
+        printf "%d%%\t%s\t%s\n", total, doc, top
+      }
+    ' "$report"
+  done | sort -t $'\t' -rn -k1,1
+}
+
+# summarize_from_scores <matches-file>
+summarize_from_scores() {
+  awk '
+    function flush() { if (doc != "" && !have) printf "0.0000\t%s\t(no matches)\n", doc; doc = "" }
+    / -- top [0-9]+ matches \(/ {
+      flush()
+      doc = $0
+      sub(/ -- top [0-9]+ matches \(.*$/, "", doc)
+      have = 0
+      next
+    }
+    /^  [0-9][0-9.]*  / && doc != "" && !have {
+      src = $0
+      sub(/^[[:space:]]*[0-9.]+[[:space:]]+/, "", src)
+      printf "%s\t%s\t%s\n", $1, doc, src
+      have = 1
+    }
+    END { flush() }
+  ' "$1" | sort -t $'\t' -rn -k1,1
+}
+
+# write_summary_table <reports-dir|""> <matches-file> <out-file>
+# Pass an empty reports directory to fall back to raw retrieval scores.
+write_summary_table() {
+  local reports_dir="$1" matches_file="$2" out_file="$3"
+  {
+    if [[ -n "$reports_dir" ]]; then
+      printf 'matched\tdocument\ttop-source\n'
+      summarize_from_reports "$reports_dir"
+    else
+      printf 'top-score\tdocument\ttop-match\n'
+      summarize_from_scores "$matches_file"
+    fi
+  } | column -t -s $'\t' > "$out_file"
+}

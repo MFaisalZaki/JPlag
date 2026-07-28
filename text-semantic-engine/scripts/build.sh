@@ -29,8 +29,11 @@ mvn -f "$REPO_ROOT/pom.xml" -pl text-semantic-engine -am install \
   -Dcheckstyle.skip=true -Denforcer.skip=true -Dmaven.javadoc.skip=true
 
 echo ">> Resolving runtime classpath…"
+# Not offline (-o): the dependency plugin is not bound to the build lifecycle, so
+# on a cold local repository — a fresh machine, or the container build — the step
+# above never fetches it. Released artefacts are not re-checked remotely anyway.
 DEPS_FILE="$MODULE_DIR/target/dependency-classpath.txt"
-mvn -f "$REPO_ROOT/pom.xml" -pl text-semantic-engine -o \
+mvn -f "$REPO_ROOT/pom.xml" -pl text-semantic-engine \
   dependency:build-classpath -Dmdep.outputFile="$DEPS_FILE" -q
 
 # The module's own compiled classes come first, then all dependency jars.
