@@ -18,6 +18,11 @@
 #                            capture group), e.g. '^([0-9]+)-' for
 #                            '<studentid>-essay.pdf'; unmatched files fall back
 #                            to AUTHOR.
+#   COAUTHOR_PATTERN=<regex> every match of this regex on a document's cover
+#                            sheet (its first 2000 characters) is a co-author,
+#                            e.g. '\b2[0-9]{8}\b' for student ids. Needed for
+#                            paired/group courseworks, where each member submits
+#                            the same document under their own name.
 #   NO_EMBEDDINGS=1          build a lexical-only (BM25) index; skips the SBERT
 #                            model download. Faster, but disables semantic/HTML
 #                            queries.
@@ -33,7 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -42,6 +47,7 @@ DOCS_DIR="$1"
 INDEX_DIR="$2"
 AUTHOR="${AUTHOR:-}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
+COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 
 require_java
 load_classpath
@@ -54,6 +60,7 @@ echo ">> Found $(count_accepted_files "$DOCS_DIR") accepted file(s) under '$DOCS
 ARGS=(index --index "$INDEX_DIR" "$DOCS_DIR" --extensions "$(extensions_csv)")
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")
+[[ -n "$COAUTHOR_PATTERN" ]] && ARGS+=(--coauthor-pattern "$COAUTHOR_PATTERN")
 [[ "${NO_EMBEDDINGS:-0}" == "1" ]] && ARGS+=(--no-embeddings)
 
 echo ">> Building index at '$INDEX_DIR'${AUTHOR:+ (author: $AUTHOR)}…"

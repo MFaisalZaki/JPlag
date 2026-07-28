@@ -1,11 +1,15 @@
 package de.jplag.text.semantic;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests resolving per-document authors from document names via a file-name regex, with fallback to a fixed author.
+ * Tests resolving per-document authors from document names via a file-name regex (with fallback to a fixed author) and
+ * co-authors from the document's cover sheet.
  */
 class AuthorResolverTest {
 
@@ -13,43 +17,61 @@ class AuthorResolverTest {
 
     @Test
     void testExtractsCaptureGroupFromFileName() {
-        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN);
-        assertEquals("240008189", resolver.authorOf("240008189-Op-Ed-4959827"));
+        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN, "");
+        assertEquals(Set.of("240008189"), resolver.authorsOf("240008189-Op-Ed-4959827", ""));
     }
 
     @Test
     void testAppliesPatternToSegmentAfterEncodedDirectories() {
-        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN);
-        assertEquals("230018551", resolver.authorOf("883469__warned__230018551-Compulsory_Q1-5085769"));
+        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN, "");
+        assertEquals(Set.of("230018551"), resolver.authorsOf("883469__warned__230018551-Compulsory_Q1-5085769", ""));
     }
 
     @Test
     void testResubmissionsResolveToTheSameAuthor() {
-        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN);
-        assertEquals(resolver.authorOf("883461__240008189-Op-Ed-4957302"), resolver.authorOf("883461__240008189-Op-Ed-4959827"));
+        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN, "");
+        assertEquals(resolver.authorsOf("883461__240008189-Op-Ed-4957302", ""), resolver.authorsOf("883461__240008189-Op-Ed-4959827", ""));
     }
 
     @Test
     void testUsesWholeMatchWhenPatternHasNoGroup() {
-        AuthorResolver resolver = new AuthorResolver("", "^[0-9]+");
-        assertEquals("240008189", resolver.authorOf("240008189-Op-Ed-4959827"));
+        AuthorResolver resolver = new AuthorResolver("", "^[0-9]+", "");
+        assertEquals(Set.of("240008189"), resolver.authorsOf("240008189-Op-Ed-4959827", ""));
     }
 
     @Test
     void testFallsBackToFixedAuthorWhenPatternDoesNotMatch() {
-        AuthorResolver resolver = new AuthorResolver("alice", STUDENT_ID_PATTERN);
-        assertEquals("alice", resolver.authorOf("essay-without-id"));
+        AuthorResolver resolver = new AuthorResolver("alice", STUDENT_ID_PATTERN, "");
+        assertEquals(Set.of("alice"), resolver.authorsOf("essay-without-id", ""));
     }
 
     @Test
     void testFixedAuthorAloneAppliesToEveryDocument() {
-        AuthorResolver resolver = new AuthorResolver("alice", "");
-        assertEquals("alice", resolver.authorOf("240008189-Op-Ed-4959827"));
+        AuthorResolver resolver = new AuthorResolver("alice", "", "");
+        assertEquals(Set.of("alice"), resolver.authorsOf("240008189-Op-Ed-4959827", ""));
+    }
+
+    @Test
+    void testCoauthorPatternPicksUpEveryIdOnTheCoverSheet() {
+        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN, "\\b2[0-9]{8}\\b");
+        String coverSheet = "STUDENT ID No: 240009742 , 240022702 MODULE CODE: SD2005 Paired Data Report";
+
+        assertEquals(Set.of("240009742", "240022702"), resolver.authorsOf("240009742-Paired_Report-5021623", coverSheet));
+    }
+
+    @Test
+    void testPartnersOfAPairShareAnAuthor() {
+        AuthorResolver resolver = new AuthorResolver("", STUDENT_ID_PATTERN, "\\b2[0-9]{8}\\b");
+        String coverSheet = "STUDENT ID No: 240009742 240022702 MODULE CODE: SD2005";
+        Set<String> mine = resolver.authorsOf("240009742-Paired_Report-5021623", coverSheet);
+        Set<String> partners = resolver.authorsOf("240022702-Paired_Report-5021622", coverSheet);
+
+        assertTrue(mine.stream().anyMatch(partners::contains), "Both copies of a paired submission should share an author");
     }
 
     @Test
     void testUnconfiguredResolverYieldsUnknownAuthor() {
-        AuthorResolver resolver = new AuthorResolver("", "");
-        assertEquals("", resolver.authorOf("240008189-Op-Ed-4959827"));
+        AuthorResolver resolver = new AuthorResolver("", "", "");
+        assertEquals(Set.of(), resolver.authorsOf("240008189-Op-Ed-4959827", ""));
     }
 }

@@ -6,8 +6,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
@@ -57,7 +59,7 @@ public class LuceneCorpusIndex {
     private static final int RRF_K = 60;
     /** Candidate pool retrieved from each ranker before fusion/truncation. */
     private static final int CANDIDATE_FACTOR = 5;
-    /** Extra candidates retrieved when an author is excluded, making room for that author's other documents. */
+    /** Extra candidates retrieved when authors are excluded, making room for those authors' other documents. */
     private static final int SAME_AUTHOR_HEADROOM = 10;
 
     private final Path indexDirectory;
@@ -77,22 +79,25 @@ public class LuceneCorpusIndex {
      * Adds (or updates by id) the given documents, attributing each to its own author (used to detect or exclude
      * same-author reuse at query time).
      * @param documents the analyzed documents to index.
-     * @param authorOf resolves each document's author (empty if unknown).
+     * @param authorsOf resolves each document's authors (empty if unknown).
      * @throws IOException if writing the index fails.
      */
-    public void index(Collection<AnalyzedSubmission> documents, Function<AnalyzedSubmission, String> authorOf) throws IOException {
+    public void index(Collection<AnalyzedSubmission> documents, Function<AnalyzedSubmission, Set<String>> authorsOf) throws IOException {
         try (Directory directory = FSDirectory.open(indexDirectory);
                 IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(new WhitespaceAnalyzer()))) {
             for (AnalyzedSubmission document : documents) {
-                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document, authorOf.apply(document)));
+                writer.updateDocument(new Term(FIELD_ID, document.name()), toLuceneDocument(document, authorsOf.apply(document)));
             }
         }
     }
 
-    private Document toLuceneDocument(AnalyzedSubmission submission, String author) {
+    private Document toLuceneDocument(AnalyzedSubmission submission, Set<String> authors) {
         Document document = new Document();
         document.add(new StringField(FIELD_ID, submission.name(), Field.Store.YES));
-        document.add(new StringField(FIELD_AUTHOR, author, Field.Store.YES));
+        // One field value per author: a paired or group submission belongs to all of its members.
+        for (String author : authors) {
+            document.add(new StringField(FIELD_AUTHOR, author, Field.Store.YES));
+        }
         document.add(new TextField(FIELD_TERMS, expandTerms(submission.termFrequencies()), Field.Store.NO));
         document.add(new StoredField(FIELD_TEXT, submission.text()));
         float[] embedding = embedder.embed(submission.text());
@@ -103,25 +108,26 @@ public class LuceneCorpusIndex {
     }
 
     /**
-     * Cross-references a query document against the index, skipping the query's own id and everything the given author
+     * Cross-references a query document against the index, skipping the query's own id and everything the given authors
      * wrote. Excluding by author extends the "never match a document against itself" rule beyond the id, so a resubmission
-     * or earlier draft stored under a different id is not reported as a source.
+     * or earlier draft stored under a different id is not reported as a source, and neither is a co-author's copy of a
+     * jointly written submission.
      * @param query the analyzed query document.
      * @param backend which signal(s) to use: TFIDF (BM25), SBERT (vector), or ENSEMBLE (RRF of both).
      * @param topK the number of matches to return.
-     * @param excludeAuthor the author whose documents to skip (empty to skip none).
+     * @param excludeAuthors the authors whose documents to skip (empty to skip none).
      * @return the matches, most similar first.
      * @throws IOException if reading the index fails.
      */
-    public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK, String excludeAuthor) throws IOException {
+    public List<CorpusMatch> query(AnalyzedSubmission query, Backend backend, int topK, Set<String> excludeAuthors) throws IOException {
         try (Directory directory = FSDirectory.open(indexDirectory); DirectoryReader reader = DirectoryReader.open(directory)) {
             IndexSearcher searcher = new IndexSearcher(reader);
             int candidates = topK * CANDIDATE_FACTOR;
             return switch (backend) {
-                case TFIDF -> lexical(searcher, query, topK, excludeAuthor);
-                case SBERT -> semantic(searcher, query, topK, excludeAuthor);
-                case ENSEMBLE -> fuse(lexical(searcher, query, candidates, excludeAuthor), semantic(searcher, query, candidates, excludeAuthor), topK,
-                        query.name());
+                case TFIDF -> lexical(searcher, query, topK, excludeAuthors);
+                case SBERT -> semantic(searcher, query, topK, excludeAuthors);
+                case ENSEMBLE -> fuse(lexical(searcher, query, candidates, excludeAuthors), semantic(searcher, query, candidates, excludeAuthors),
+                        topK, query.name());
             };
         }
     }
@@ -141,7 +147,7 @@ public class LuceneCorpusIndex {
                 TopDocs topDocs = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
                 if (topDocs.scoreDocs.length > 0) {
                     Document stored = storedFields.document(topDocs.scoreDocs[0].doc);
-                    documents.add(new ArchivedDocument(id, orEmpty(stored.get(FIELD_AUTHOR)), orEmpty(stored.get(FIELD_TEXT))));
+                    documents.add(new ArchivedDocument(id, authorsOf(stored), orEmpty(stored.get(FIELD_TEXT))));
                 }
             }
         }
@@ -165,31 +171,32 @@ public class LuceneCorpusIndex {
         }
     }
 
-    private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
+    private List<CorpusMatch> lexical(IndexSearcher searcher, AnalyzedSubmission query, int topK, Set<String> excludeAuthors) throws IOException {
         BooleanQuery.Builder builder = new BooleanQuery.Builder();
         query.termFrequencies().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(MAX_QUERY_TERMS)
                 .forEach(entry -> builder.add(new TermQuery(new Term(FIELD_TERMS, entry.getKey())), BooleanClause.Occur.SHOULD));
-        return search(searcher, builder.build(), topK, query.name(), excludeAuthor);
+        return search(searcher, builder.build(), topK, query.name(), excludeAuthors);
     }
 
-    private List<CorpusMatch> semantic(IndexSearcher searcher, AnalyzedSubmission query, int topK, String excludeAuthor) throws IOException {
+    private List<CorpusMatch> semantic(IndexSearcher searcher, AnalyzedSubmission query, int topK, Set<String> excludeAuthors) throws IOException {
         float[] vector = embedder.embed(query.text());
         if (!isNonZero(vector)) {
             return List.of();
         }
-        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, fetchSize(topK, excludeAuthor)), topK, query.name(), excludeAuthor);
+        return search(searcher, new KnnFloatVectorQuery(FIELD_VECTOR, vector, fetchSize(topK, excludeAuthors)), topK, query.name(), excludeAuthors);
     }
 
-    private static List<CorpusMatch> search(IndexSearcher searcher, Query query, int topK, String excludeId, String excludeAuthor)
+    private static List<CorpusMatch> search(IndexSearcher searcher, Query query, int topK, String excludeId, Set<String> excludeAuthors)
             throws IOException {
-        TopDocs topDocs = searcher.search(query, fetchSize(topK, excludeAuthor));
+        TopDocs topDocs = searcher.search(query, fetchSize(topK, excludeAuthors));
         StoredFields storedFields = searcher.storedFields();
         List<CorpusMatch> matches = new ArrayList<>();
         for (ScoreDoc scoreDoc : topDocs.scoreDocs) {
             Document stored = storedFields.document(scoreDoc.doc);
             String id = stored.get(FIELD_ID);
-            boolean sameAuthor = !excludeAuthor.isBlank() && excludeAuthor.equals(stored.get(FIELD_AUTHOR));
-            if (!id.equals(excludeId) && !sameAuthor) { // never match a document against itself or its author's other work
+            // A shared author is enough: a paired submission is the work of everyone named on it.
+            boolean sameAuthor = authorsOf(stored).stream().anyMatch(excludeAuthors::contains);
+            if (!id.equals(excludeId) && !sameAuthor) { // never match a document against itself or its authors' other work
                 matches.add(new CorpusMatch(id, scoreDoc.score));
             }
             if (matches.size() == topK) {
@@ -199,9 +206,13 @@ public class LuceneCorpusIndex {
         return matches;
     }
 
-    /** Documents to retrieve before exclusions: the query itself, plus headroom for the excluded author's other work. */
-    private static int fetchSize(int topK, String excludeAuthor) {
-        return topK + 1 + (excludeAuthor.isBlank() ? 0 : SAME_AUTHOR_HEADROOM);
+    private static Set<String> authorsOf(Document stored) {
+        return new LinkedHashSet<>(List.of(stored.getValues(FIELD_AUTHOR)));
+    }
+
+    /** Documents to retrieve before exclusions: the query itself, plus headroom for the excluded authors' other work. */
+    private static int fetchSize(int topK, Set<String> excludeAuthors) {
+        return topK + 1 + (excludeAuthors.isEmpty() ? 0 : SAME_AUTHOR_HEADROOM * excludeAuthors.size());
     }
 
     private static List<CorpusMatch> fuse(List<CorpusMatch> lexical, List<CorpusMatch> semantic, int topK, String excludeId) {

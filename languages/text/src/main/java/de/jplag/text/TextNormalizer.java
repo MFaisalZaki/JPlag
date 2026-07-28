@@ -36,6 +36,9 @@ public class TextNormalizer {
     /** Part-of-speech tags tried in order when looking a word up in WordNet (no POS tagger is used). */
     private static final List<POS> POS_LOOKUP_ORDER = List.of(POS.NOUN, POS.VERB, POS.ADJECTIVE, POS.ADVERB);
 
+    /** Most {@code -}/{@code _} separated parts a word may have and still be looked up; see {@link #isWordLike}. */
+    private static final int MAX_LEMMA_PARTS = 4;
+
     private final boolean lemmatize;
     private final boolean removeStopwords;
     private final boolean expandSynonyms;
@@ -112,8 +115,7 @@ public class TextNormalizer {
      * {@link #POS_LOOKUP_ORDER}.
      */
     private IndexWord lookup(String word) {
-        // Skip single characters: initials like "T." or "C." otherwise map to unrelated synsets (thymine, celsius, ...).
-        if (word.length() < 2) {
+        if (!isWordLike(word)) {
             return null;
         }
         for (POS pos : POS_LOOKUP_ORDER) {
@@ -127,5 +129,32 @@ public class TextNormalizer {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether the word is worth looking up in WordNet at all.
+     * <p>
+     * Single characters are excluded because initials like "T." or "C." otherwise map to unrelated synsets (thymine,
+     * celsius, ...). The other two rules bound the cost: WordNet stores multi-word lemmas separated by {@code _}, so its
+     * morphological processor splits a word on {@code -} and {@code _} and tries <em>every</em> regrouping of the parts —
+     * work that doubles with each additional part. A URL or file name pasted into a document is a single token to the
+     * tokenizer but no kind of English word, and a long one (measured: 19 parts takes over an hour) stalls the parse on its
+     * own. Genuine hyphenated words stay well inside {@link #MAX_LEMMA_PARTS}, e.g. "state-of-the-art".
+     */
+    private static boolean isWordLike(String word) {
+        if (word.length() < 2) {
+            return false;
+        }
+        int parts = 1;
+        for (int i = 0; i < word.length(); i++) {
+            char character = word.charAt(i);
+            if (character == '/' || character == ':') { // a path or a URI scheme, never a lemma
+                return false;
+            }
+            if ((character == '-' || character == '_') && ++parts > MAX_LEMMA_PARTS) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -29,10 +29,25 @@
 #                                   name (first capture group), e.g. '^([0-9]+)-'
 #                                   for '<studentid>-essay.pdf'; unmatched files
 #                                   fall back to AUTHOR.
+#   COAUTHOR_PATTERN=<regex>        every match of this regex on a document's
+#                                   cover sheet is a co-author, e.g.
+#                                   '\b2[0-9]{8}\b' for student ids. Needed for
+#                                   paired/group courseworks, where each member
+#                                   submits the same document under their own
+#                                   name; must match what was used at index time.
 #   SAME_AUTHOR=<exclude|flag>      what to do with matches to the query author's
 #                                   own indexed work: 'exclude' (default) drops
 #                                   them (a resubmission is then not reported at
 #                                   all), 'flag' marks them as self-plagiarism.
+#   COMMON_SENTENCE_SHARE=<0-1>     share of the checked set above which a
+#                                   sentence counts as given material (assignment
+#                                   brief, prescribed method, template) and is
+#                                   left out of the check (default: 0.10). 0
+#                                   disables it; it is ignored below 10 documents.
+#   CHECK_ALL_SECTIONS=<1|0>        1 also checks cover sheets and reference
+#                                   lists (default: 0). They are identical across
+#                                   a cohort by design, so checking them scores
+#                                   every submission highly and shows nothing.
 #
 # Examples:
 #   scripts/run-plagiarism.sh ./new-submissions ./corpus-index ./results
@@ -44,7 +59,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 3 ]] || { usage; die "expected 3 arguments, got $#."; }
@@ -64,7 +79,10 @@ fi
 SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
 AUTHOR="${AUTHOR:-}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
+COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
+COMMON_SENTENCE_SHARE="${COMMON_SENTENCE_SHARE:-0.10}"
+CHECK_ALL_SECTIONS="${CHECK_ALL_SECTIONS:-0}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
 
 require_java
@@ -85,11 +103,14 @@ SUMMARY_FILE="$RESULTS_DIR/matches.txt"
 ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
       --backend "$BACKEND" --top-k "$TOP_K_ARG"
       --sentence-threshold "$SENTENCE_THRESHOLD"
+      --common-sentence-share "$COMMON_SENTENCE_SHARE"
       --extensions "$(extensions_csv)"
       --html-report "$REPORTS_DIR")
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")
+[[ -n "$COAUTHOR_PATTERN" ]] && ARGS+=(--coauthor-pattern "$COAUTHOR_PATTERN")
 [[ "$SAME_AUTHOR" == "flag" ]] && ARGS+=(--no-exclude-same-author)
+[[ "$CHECK_ALL_SECTIONS" == "1" ]] && ARGS+=(--check-all-sections)
 
 echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD)…"
 # Tee the ranked-match console output into the results directory as well.

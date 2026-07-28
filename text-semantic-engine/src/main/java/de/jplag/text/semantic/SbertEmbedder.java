@@ -22,7 +22,13 @@ import edu.stanford.nlp.pipeline.StanfordCoreNLP;
 public class SbertEmbedder implements DocumentEmbedder {
 
     private static final String MODEL_URL = "djl://ai.djl.huggingface.pytorch/sentence-transformers/all-MiniLM-L6-v2";
-    private static final int MINIMUM_SENTENCE_TOKENS = 3;
+    /**
+     * Sentences shorter than this are dropped. Sentence splitting turns headings, table cells, dates and the shards of a
+     * reference entry into their own "sentences"; they embed unreliably (too little context for the model to place them)
+     * and they match each other across documents for no interesting reason, so they are noise in a report rather than
+     * evidence. Counted in CoreNLP tokens, so punctuation counts too.
+     */
+    private static final int MINIMUM_SENTENCE_TOKENS = 10;
 
     private final StanfordCoreNLP sentencePipeline;
     private final ZooModel<String, float[]> model;
@@ -57,10 +63,24 @@ public class SbertEmbedder implements DocumentEmbedder {
      */
     public List<EmbeddedSentence> embedSentencesWithText(String text) {
         List<EmbeddedSentence> sentences = new ArrayList<>();
+        for (String sentence : splitSentences(text)) {
+            sentences.add(new EmbeddedSentence(sentence, embedSentence(sentence)));
+        }
+        return sentences;
+    }
+
+    /**
+     * Splits a text into the same sentences {@link #embedSentencesWithText} would embed, without embedding them — for
+     * counting how often a sentence occurs across a cohort, which needs the text only.
+     * @param text the document text.
+     * @return the sentences, in order.
+     */
+    public List<String> splitSentences(String text) {
+        List<String> sentences = new ArrayList<>();
         CoreDocument document = sentencePipeline.processToCoreDocument(text);
         for (CoreSentence sentence : document.sentences()) {
             if (sentence.tokens().size() >= MINIMUM_SENTENCE_TOKENS) {
-                sentences.add(new EmbeddedSentence(sentence.text(), embedSentence(sentence.text())));
+                sentences.add(sentence.text());
             }
         }
         return sentences;

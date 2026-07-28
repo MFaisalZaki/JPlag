@@ -1,6 +1,7 @@
 package de.jplag.text.semantic;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -10,6 +11,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+
+import de.jplag.text.semantic.DocumentSections.Section;
 
 /**
  * Generates a self-contained, Turnitin-style HTML "originality report" for a query document.
@@ -21,11 +24,17 @@ import java.util.function.Function;
  * <li>categorized by literal word overlap ({@link MatchCategory}: copy-paste / lightly edited / paraphrase),</li>
  * <li>checked for acknowledgement ({@link CitationDetector}): quoted/cited passages are attributed, the rest are
  * unattributed,</li>
- * <li>and, when the query's author is known, flagged as <em>self-reuse</em> if the source is by the same author
- * (self-plagiarism) rather than another author.</li>
+ * <li>and, when the query's authors are known, flagged as <em>self-reuse</em> if the source shares an author
+ * (self-plagiarism) rather than being someone else's work.</li>
  * </ul>
  * By default only unattributed matches are highlighted and counted; when {@code excludeAttributed} is false, attributed
  * matches are also shown but de-emphasized.
+ * <p>
+ * Text that is not the student's own writing is left out of the check altogether, on both the query and the source
+ * side: cover sheets and reference lists ({@link DocumentSections}) and sentences most of the cohort also submitted
+ * ({@link SentenceFrequency}). Such text is identical across a class by design, so counting it produces a high score
+ * for every submission and tells a reader nothing. It is excluded from the score's denominator too, so the percentage
+ * means "share of the student's own prose that came from a source".
  * <p>
  * Note that sentence embeddings rate any two sentences on one topic highly whether or not either was copied, so the
  * threshold has to be set high (0.85 rather than 0.70) for similarity to mean reuse rather than shared subject matter.
@@ -41,6 +50,8 @@ public class OriginalityReportGenerator {
     private final double matchThreshold;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
     private final boolean excludeAttributed;
+    private final boolean excludeNonBodySections;
+    private final SentenceFrequency commonSentences;
     /** Sentence embeddings per source document id, so a document shared by many queries is embedded once. */
     private final Map<String, List<EmbeddedSentence>> sentenceCache = new HashMap<>();
 
@@ -50,27 +61,62 @@ public class OriginalityReportGenerator {
      * @param sentenceEmbedder splits a text into sentences and embeds them (e.g.
      * {@code SbertEmbedder::embedSentencesWithText}).
      * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted (only concerns are shown).
+     * @param excludeNonBodySections if true, front matter and reference lists are left out of the check entirely.
+     * @param commonSentences the cohort's sentence frequencies, whose common sentences are left out of the check; pass
+     * {@link SentenceFrequency#disabled()} to keep them.
      */
-    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed) {
+    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed,
+            boolean excludeNonBodySections, SentenceFrequency commonSentences) {
         this.matchThreshold = matchThreshold;
         this.sentenceEmbedder = sentenceEmbedder;
         this.excludeAttributed = excludeAttributed;
+        this.excludeNonBodySections = excludeNonBodySections;
+        this.commonSentences = commonSentences;
     }
 
-    private record SourceDocument(String id, String author, List<EmbeddedSentence> sentences) {
+    /** Why a sentence was left out of the check, or {@link #NONE} if it was checked. */
+    private enum Exclusion {
+
+        NONE(null),
+        FRONT_MATTER("cover sheet / front matter"),
+        REFERENCES("reference list"),
+        TABULAR("table or data, not prose"),
+        COHORT_BOILERPLATE("shared with much of the cohort");
+
+        private final String label;
+
+        Exclusion(String label) {
+            this.label = label;
+        }
+
+        String label() {
+            return label;
+        }
+    }
+
+    private record SourceDocument(String id, Set<String> authors, List<EmbeddedSentence> sentences, List<Exclusion> exclusions) {
+
+        boolean isCheckable(int sentenceIndex) {
+            return exclusions.get(sentenceIndex) == Exclusion.NONE;
+        }
     }
 
     private record Attribution(String text, String sourceId, String sourceSentence, int sourceSentenceIndex, double score, MatchCategory category,
-            AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched) {
+            AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched, Exclusion exclusion) {
 
         // Whether this match should be highlighted and counted (a match that is not an excluded attributed one).
         boolean reported(boolean excludeAttributed) {
             return matched && !(excludeAttributed && attribution.isAttributed());
         }
+
+        static Attribution excluded(String text, Exclusion exclusion) {
+            return new Attribution(text, null, null, -1, 0.0, null, null, null, false, false, exclusion);
+        }
     }
 
     private record Totals(double overallPercent, double unattributedPercent, double attributedPercent, double excludedPercent,
-            double selfReusePercent, Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource, int totalWords) {
+            double selfReusePercent, double notCheckedPercent, Map<MatchCategory, Integer> wordsPerCategory, Map<String, Integer> wordsPerSource,
+            int totalWords) {
     }
 
     /**
@@ -78,17 +124,18 @@ public class OriginalityReportGenerator {
      * @param queryId the query document's name.
      * @param queryText the query document's text.
      * @param sources the candidate source documents to attribute matches to.
-     * @param queryAuthor the query document's author; matches to sources by this author are flagged as self-reuse.
+     * @param queryAuthors the query document's authors; matches to sources sharing an author are flagged as self-reuse.
      * @return a complete, self-contained HTML document.
      */
-    public String generate(String queryId, String queryText, List<ArchivedDocument> sources, String queryAuthor) {
+    public String generate(String queryId, String queryText, List<ArchivedDocument> sources, Set<String> queryAuthors) {
         List<EmbeddedSentence> querySentences = sentenceEmbedder.apply(queryText);
         List<SourceDocument> sourceDocuments = new ArrayList<>();
         for (ArchivedDocument source : sources) {
-            sourceDocuments.add(new SourceDocument(source.id(), source.author(), sentencesOf(source.id(), source.text())));
+            List<EmbeddedSentence> sentences = sentencesOf(source.id(), source.text());
+            sourceDocuments.add(new SourceDocument(source.id(), source.authors(), sentences, exclusionsOf(sentences)));
         }
 
-        List<Attribution> attributions = attribute(querySentences, sourceDocuments, queryAuthor);
+        List<Attribution> attributions = attribute(querySentences, exclusionsOf(querySentences), sourceDocuments, queryAuthors);
         Totals totals = totals(attributions);
 
         List<String> orderedSources = totals.wordsPerSource().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
@@ -98,7 +145,26 @@ public class OriginalityReportGenerator {
             rankOf.put(orderedSources.get(i), i + 1);
         }
 
-        return renderHtml(queryId, totals, attributions, sourceDocuments, orderedSources, rankOf, !queryAuthor.isBlank());
+        return renderHtml(queryId, totals, attributions, sourceDocuments, orderedSources, rankOf, !queryAuthors.isEmpty());
+    }
+
+    /**
+     * Decides, for each sentence of a document, whether it is the author's own prose (and so worth checking) or material
+     * every submission shares — its cover sheet, its reference list, or a sentence most of the cohort also handed in.
+     */
+    private List<Exclusion> exclusionsOf(List<EmbeddedSentence> sentences) {
+        List<String> texts = sentences.stream().map(EmbeddedSentence::text).toList();
+        List<Section> sections = excludeNonBodySections ? DocumentSections.of(texts) : Collections.nCopies(texts.size(), Section.BODY);
+        List<Exclusion> exclusions = new ArrayList<>(texts.size());
+        for (int i = 0; i < texts.size(); i++) {
+            exclusions.add(switch (sections.get(i)) {
+                case FRONT_MATTER -> Exclusion.FRONT_MATTER;
+                case REFERENCES -> Exclusion.REFERENCES;
+                case BODY -> DocumentSections.isTabular(texts.get(i)) ? Exclusion.TABULAR
+                        : commonSentences.isCommon(texts.get(i)) ? Exclusion.COHORT_BOILERPLATE : Exclusion.NONE;
+            });
+        }
+        return exclusions;
     }
 
     /**
@@ -113,23 +179,33 @@ public class OriginalityReportGenerator {
         return sentenceCache.computeIfAbsent(documentId, key -> sentenceEmbedder.apply(text));
     }
 
-    private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<SourceDocument> sources, String queryAuthor) {
+    private List<Attribution> attribute(List<EmbeddedSentence> querySentences, List<Exclusion> queryExclusions, List<SourceDocument> sources,
+            Set<String> queryAuthors) {
         List<Attribution> attributions = new ArrayList<>();
         for (int i = 0; i < querySentences.size(); i++) {
             EmbeddedSentence querySentence = querySentences.get(i);
+            if (queryExclusions.get(i) != Exclusion.NONE) {
+                attributions.add(Attribution.excluded(querySentence.text(), queryExclusions.get(i)));
+                continue;
+            }
             double bestScore = -1.0;
             String bestSource = null;
-            String bestAuthor = "";
+            Set<String> bestAuthors = Set.of();
             String bestSentence = null;
             int bestIndex = -1;
             for (SourceDocument source : sources) {
                 for (int candidateIndex = 0; candidateIndex < source.sentences().size(); candidateIndex++) {
+                    // Matching against a source's cover sheet, references or shared boilerplate says as little as
+                    // matching from the query's own, so those sentences are not candidates either.
+                    if (!source.isCheckable(candidateIndex)) {
+                        continue;
+                    }
                     EmbeddedSentence candidate = source.sentences().get(candidateIndex);
                     double similarity = cosine(querySentence.vector(), candidate.vector());
                     if (similarity > bestScore) {
                         bestScore = similarity;
                         bestSource = source.id();
-                        bestAuthor = source.author();
+                        bestAuthors = source.authors();
                         bestSentence = candidate.text();
                         bestIndex = candidateIndex;
                     }
@@ -139,9 +215,9 @@ public class OriginalityReportGenerator {
             MatchCategory category = matched ? MatchCategory.fromWordOverlap(wordOverlap(querySentence.text(), bestSentence)) : null;
             String nextSentence = i + 1 < querySentences.size() ? querySentences.get(i + 1).text() : "";
             CitationDetector.AttributionCheck check = matched ? attributionWithLookahead(querySentence.text(), nextSentence) : null;
-            boolean selfReuse = matched && !queryAuthor.isBlank() && queryAuthor.equals(bestAuthor);
+            boolean selfReuse = matched && !Collections.disjoint(queryAuthors, bestAuthors);
             attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestIndex, bestScore, category,
-                    check == null ? null : check.status(), check == null ? null : check.evidence(), selfReuse, matched));
+                    check == null ? null : check.status(), check == null ? null : check.evidence(), selfReuse, matched, Exclusion.NONE));
         }
         return attributions;
     }
@@ -159,8 +235,17 @@ public class OriginalityReportGenerator {
         return next.status() == AttributionStatus.CITED ? next : self;
     }
 
+    /**
+     * Adds up the report's percentages. Sentences left out of the check are not in the denominator: the score answers "how
+     * much of what this student actually wrote came from a source", so shared cover sheets, reference lists and cohort
+     * boilerplate neither raise it nor dilute it. Their own share is reported separately, as a share of the whole document,
+     * so a reader can see how much was skipped.
+     */
     private Totals totals(List<Attribution> attributions) {
-        int totalWords = attributions.stream().mapToInt(attribution -> wordCount(attribution.text())).sum();
+        int documentWords = attributions.stream().mapToInt(attribution -> wordCount(attribution.text())).sum();
+        int notCheckedWords = attributions.stream().filter(attribution -> attribution.exclusion() != Exclusion.NONE)
+                .mapToInt(attribution -> wordCount(attribution.text())).sum();
+        int totalWords = documentWords - notCheckedWords;
         Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
         Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
@@ -191,7 +276,7 @@ public class OriginalityReportGenerator {
         double overall = percent(matchedWords, totalWords);
         double unattributed = percent(unattributedWords, totalWords);
         return new Totals(overall, unattributed, overall - unattributed, percent(excludedWords, totalWords), percent(selfReuseWords, totalWords),
-                wordsPerCategory, wordsPerSource, totalWords);
+                percent(notCheckedWords, documentWords), wordsPerCategory, wordsPerSource, totalWords);
     }
 
     /** Anchor of the highlighted query sentence at this attribution index (for jumping back from the source passage). */
@@ -231,6 +316,10 @@ public class OriginalityReportGenerator {
             html.append(chip("#a5d6a7", "Quoted / cited", totals.attributedPercent()));
             html.append(chip("#ef5350", "Unattributed (concern)", totals.unattributedPercent()));
         }
+        if (totals.notCheckedPercent() > 0) {
+            html.append("<span class=\"grp\">Skipped:</span>");
+            html.append(chip("#cfd8dc", "Cover sheet / references / tables / shared text (of document)", totals.notCheckedPercent()));
+        }
         html.append("</div>");
 
         // For every matched source sentence, remember the first query sentence that hit it, so the passage can link back.
@@ -261,6 +350,9 @@ public class OriginalityReportGenerator {
                     html.append("<sup class=\"att\">✓</sup>");
                 }
                 html.append("<sup>").append(rank).append("</sup></a> ");
+            } else if (attribution.exclusion() != Exclusion.NONE) {
+                html.append("<span class=\"skipped\" title=\"Not checked: ").append(escape(attribution.exclusion().label())).append("\">")
+                        .append(escape(attribution.text())).append("</span> ");
             } else {
                 html.append("<span>").append(escape(attribution.text())).append("</span> ");
             }
@@ -283,9 +375,11 @@ public class OriginalityReportGenerator {
                         + "(marked ✓) and is the actual plagiarism concern. ")
                 .append("Matches marked ↺ reuse the submitter's own prior work (self-plagiarism). Matches are semantic (SBERT, threshold ")
                 .append(String.format(Locale.ROOT, "%.2f", matchThreshold))
-                .append("); the type comes from literal word overlap. On a set of documents about one subject some similarity is expected, so "
-                        + "read a match as evidence only where the wording, not merely the subject, is shared. Click a highlight to jump to the "
-                        + "matched passage in the source below; click the passage to jump back.</footer>");
+                .append("); the type comes from literal word overlap. Greyed-out text was not checked (cover sheet, reference list, table data, or "
+                        + "a sentence much of the cohort submitted) and is excluded from the percentages, which are shares of the remaining text. On a set of "
+                        + "documents about one subject some similarity is expected, so read a match as evidence only where the wording, not merely "
+                        + "the subject, is shared. Click a highlight to jump to the matched passage in the source below; click the passage to jump "
+                        + "back.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -404,6 +498,7 @@ public class OriginalityReportGenerator {
                 + ".match{border-radius:3px;padding:1px 2px;cursor:pointer;color:inherit;text-decoration:none}"
                 + ".match sup{font-size:10px;font-weight:700;color:#555;margin-left:1px}"
                 + ".match.attributed{opacity:.45;text-decoration:underline dotted}.match .att{color:#2e7d32}" + ".match .self-mark{color:#8e24aa}"
+                + ".skipped{color:#b0b0b0}"
                 + "aside{width:270px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:sticky;top:20px}"
                 + "aside h2{font-size:13px;text-transform:uppercase;color:#888;margin:0 0 14px}"
                 + ".source{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}"

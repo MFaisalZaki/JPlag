@@ -4,9 +4,11 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import org.slf4j.Logger;
@@ -30,6 +32,9 @@ public class CorpusCli implements Runnable {
 
     private static final String EXTENSIONS_DESCRIPTION = "Comma-separated file extensions to include, searched recursively "
             + "(with or without a leading dot). Default: the text module's extensions plus .pdf.";
+    private static final String COAUTHOR_DESCRIPTION = "Regex whose every match on the first 2000 characters of a document "
+            + "(its cover sheet) is a co-author, e.g. '\\b2[0-9]{8}\\b' for student ids. Needed for paired or group "
+            + "courseworks, where each member submits the same document and the file name names only the submitter.";
 
     private static SubmissionReader reader(List<String> extensions) {
         return new SubmissionReader(extensions == null || extensions.isEmpty() ? SubmissionReader.defaultFileExtensions() : extensions);
@@ -70,17 +75,21 @@ public class CorpusCli implements Runnable {
                 + "'<studentid>-essay.pdf'; files it does not match fall back to --author.")
         private String authorPattern;
 
+        @Option(names = "--coauthor-pattern", defaultValue = "", description = COAUTHOR_DESCRIPTION)
+        private String coauthorPattern;
+
         @Option(names = "--extensions", split = ",", description = EXTENSIONS_DESCRIPTION)
         private List<String> extensions;
 
         @Override
         public Integer call() throws Exception {
             List<AnalyzedSubmission> submissions = reader(extensions).readDocuments(documents);
-            AuthorResolver authorResolver = new AuthorResolver(author, authorPattern);
+            AuthorResolver authorResolver = new AuthorResolver(author, authorPattern, coauthorPattern);
             try (DocumentEmbedder embedder = noEmbeddings ? noEmbedder() : new SbertEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
-                index.index(submissions, submission -> authorResolver.authorOf(submission.name()));
-                long authored = submissions.stream().filter(submission -> !authorResolver.authorOf(submission.name()).isBlank()).count();
+                index.index(submissions, submission -> authorResolver.authorsOf(submission.name(), submission.text()));
+                long authored = submissions.stream().filter(submission -> !authorResolver.authorsOf(submission.name(), submission.text()).isEmpty())
+                        .count();
                 logger.info("Indexed {} document(s){}; corpus now holds {}.", submissions.size(),
                         authored == 0 ? "" : " (" + authored + " with an author)", index.size());
             }
@@ -123,6 +132,16 @@ public class CorpusCli implements Runnable {
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
 
+        @Option(names = "--check-all-sections", description = "Also check cover sheets and reference lists. By default only "
+                + "the body is checked: a cohort's cover sheets and bibliographies are identical by design, so matching them "
+                + "scores every submission highly and shows nothing.")
+        private boolean checkAllSections;
+
+        @Option(names = "--common-sentence-share", defaultValue = "0.10", description = "Share of the query set above which a "
+                + "sentence counts as shared material (assignment brief, prescribed method, template) and is left out of the "
+                + "check. 0 disables this. Ignored for fewer than 10 query documents, where the share means nothing. " + "Default: ${DEFAULT-VALUE}.")
+        private double commonSentenceShare;
+
         @Option(names = "--author", defaultValue = "", description = "Author of the query document(s); matches to the same "
                 + "author's indexed work are flagged as self-plagiarism.")
         private String queryAuthor;
@@ -131,6 +150,9 @@ public class CorpusCli implements Runnable {
                 + "extract its author (first capture group, or the whole match). Lets authors differ per file, e.g. '^([0-9]+)-' "
                 + "for '<studentid>-essay.pdf'; files it does not match fall back to --author.")
         private String authorPattern;
+
+        @Option(names = "--coauthor-pattern", defaultValue = "", description = COAUTHOR_DESCRIPTION)
+        private String coauthorPattern;
 
         @Option(names = "--exclude-same-author", negatable = true, defaultValue = "true", fallbackValue = "true", description = "Never "
                 + "match a document against its own author's other indexed work (e.g. a resubmission of the same essay). On by "
@@ -144,13 +166,14 @@ public class CorpusCli implements Runnable {
         @Override
         public Integer call() throws Exception {
             List<AnalyzedSubmission> queries = reader(extensions).readDocuments(queryDocuments);
-            AuthorResolver authorResolver = new AuthorResolver(queryAuthor, authorPattern);
+            AuthorResolver authorResolver = new AuthorResolver(queryAuthor, authorPattern, coauthorPattern);
             boolean needsSbert = backend != Backend.TFIDF || htmlReportDirectory != null;
             SbertEmbedder sbert = needsSbert ? new SbertEmbedder() : null;
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed);
+                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed, !checkAllSections,
+                                commonSentences(queries, sbert));
                 // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
                 // results; it just no longer decides which documents get compared at all.
                 int comparedDocuments = topK > 0 ? topK : index.size();
@@ -158,30 +181,48 @@ public class CorpusCli implements Runnable {
                     System.out.printf("Comparing each query against all %d indexed document(s).%n", comparedDocuments);
                 }
                 for (AnalyzedSubmission query : queries) {
-                    report(index, reportGenerator, query, authorResolver.authorOf(query.name()), comparedDocuments);
+                    report(index, reportGenerator, query, authorResolver.authorsOf(query.name(), query.text()), comparedDocuments);
                 }
             }
             return 0;
         }
 
-        private void report(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query, String author,
+        /**
+         * Counts how often each sentence occurs across the query set, so that sentences most of a cohort submitted can be left
+         * out of the check. The query set is the cohort: a coursework is checked by querying every submission against the index
+         * of the same submissions.
+         */
+        private SentenceFrequency commonSentences(List<AnalyzedSubmission> queries, SbertEmbedder sbert) {
+            if (sbert == null || commonSentenceShare <= 0) {
+                return SentenceFrequency.disabled();
+            }
+            SentenceFrequency frequency = SentenceFrequency.of(queries.stream().map(AnalyzedSubmission::text).toList(), sbert::splitSentences,
+                    commonSentenceShare);
+            if (frequency.isEnabled()) {
+                System.out.printf("Sentences shared by more than %.0f%% of the %d query document(s) are treated as given material.%n",
+                        commonSentenceShare * 100, queries.size());
+            }
+            return frequency;
+        }
+
+        private void report(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query, Set<String> authors,
                 int comparedDocuments) throws IOException {
-            List<CorpusMatch> matches = index.query(query, backend, comparedDocuments, excludeSameAuthor ? author : "");
-            List<ArchivedDocument> sources = generator != null || !author.isBlank()
+            List<CorpusMatch> matches = index.query(query, backend, comparedDocuments, excludeSameAuthor ? authors : Set.of());
+            List<ArchivedDocument> sources = generator != null || !authors.isEmpty()
                     ? index.documents(matches.stream().map(CorpusMatch::documentId).toList())
                     : List.of();
-            Map<String, String> authorOf = new HashMap<>();
-            sources.forEach(source -> authorOf.put(source.id(), source.author()));
+            Map<String, Set<String>> authorsOf = new HashMap<>();
+            sources.forEach(source -> authorsOf.put(source.id(), source.authors()));
 
             System.out.printf("%n%s -- top %d matches (%s):%n", query.name(), matches.size(), backend);
             for (CorpusMatch match : matches) {
-                boolean self = !author.isBlank() && author.equals(authorOf.get(match.documentId()));
+                boolean self = !Collections.disjoint(authors, authorsOf.getOrDefault(match.documentId(), Set.of()));
                 System.out.printf("  %.4f  %s%s%n", match.score(), match.documentId(), self ? "  [SELF-PLAGIARISM]" : "");
             }
             if (generator != null && htmlReportDirectory != null) {
                 Files.createDirectories(htmlReportDirectory.toPath());
                 Path output = htmlReportDirectory.toPath().resolve(query.name() + ".html");
-                Files.writeString(output, generator.generate(query.name(), query.text(), sources, author));
+                Files.writeString(output, generator.generate(query.name(), query.text(), sources, authors));
                 System.out.printf("  -> HTML report: %s%n", output.toAbsolutePath());
             }
         }
