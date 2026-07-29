@@ -60,6 +60,7 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--top-k <n>` | `0` (= all) | Archived documents to compare each query against. `0` compares against the whole index, so nothing is missed because retrieval ranked it low; set a limit only for a corpus too large to compare in full. |
 | `--html-report <dir>` | (none) | Write a Turnitin-style HTML originality report per query document. Requires SBERT. |
 | `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. |
+| `--minimum-word-overlap <0-1>` | `0` | Literal word overlap (Jaccard) a match must reach on top of the sentence threshold. Leave at `0` when the index holds the cohort's own submissions; raise it (`0.4` lightly edited, `0.8` near-verbatim) against published or reference material, whose standard sentences match everyone who states them correctly. |
 | `--show-attributed` | off | Also highlight quoted/cited matches (de-emphasized). |
 | `--author <name>` / `--author-pattern <regex>` | (none) | The query documents' author, as at index time. |
 | `--[no-]exclude-same-author` | on | Never match a document against its own author's other indexed work (e.g. a resubmission). `--no-exclude-same-author` keeps such matches, flagged as self-plagiarism. |
@@ -108,19 +109,19 @@ List<AnalyzedSubmission> documents = new SubmissionReader(SubmissionReader.defau
 
 try (SbertEmbedder embedder = new SbertEmbedder()) {
     LuceneCorpusIndex index = new LuceneCorpusIndex(indexPath, embedder);
-    index.index(documents, document -> "");   // or a per-document author
+    index.index(documents, document -> Set.of());   // or the document's author(s)
 
-    List<CorpusMatch> matches = index.query(query, Backend.ENSEMBLE, index.size(), "");
+    List<CorpusMatch> matches = index.query(query, Backend.ENSEMBLE, index.size(), Set.of());
     List<ArchivedDocument> sources = index.documents(matches.stream().map(CorpusMatch::documentId).toList());
-    String html = new OriginalityReportGenerator(0.85, embedder::embedSentencesWithText, true)
-            .generate(query.name(), query.text(), sources, "");
+    String html = new OriginalityReportGenerator(0.85, 0, embedder::embedSentencesWithText, true)
+            .generate(query.name(), query.text(), sources, Set.of());
 }
 ```
 
 ## Limitations
 
 - **Similarity is not proof.** Sentence embeddings rate any two sentences on one subject highly whether or not either was copied, so on a set of documents answering one prompt some similarity is expected. That is why `--sentence-threshold` defaults to `0.85` rather than `0.70`; read a match as evidence only where the *wording*, not merely the subject, is shared — which is what the category breakdown reports.
-- **Shared front matter matches near-perfectly.** A cohort's common assignment cover sheet or academic-integrity declaration will outrank genuine matches unless it is stripped from the documents beforehand.
+- **Shared material matches near-perfectly, and is counted.** Every sentence is checked — a cohort's common cover sheet, academic-integrity declaration, assignment brief and shared reading list are identical by design, so they match near-perfectly and take a share of every score. Strip them from the documents beforehand if that matters for the run.
 - **Attribution detection is a text heuristic.** It cannot see footnote superscripts (lost in PDF extraction), does not verify that a citation matches the reused source, and treats any quotation marks as a quote — so dialogue can read as attribution. Treat the unattributed figure as a strong signal, not a verdict.
 - **English** lemmatization and synonyms (WordNet); synonym canonicalization has no word-sense disambiguation, so it raises recall at some cost to precision.
 - Indexing reads a directory batch into memory — for very large archives, add in batches (each `index` call appends). Doc-level embeddings (one vector per document) keep the vector index tractable at 100k–1M+ docs.

@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +30,7 @@ class OriginalityReportGeneratorTest {
     };
 
     private static OriginalityReportGenerator generator(double threshold) {
-        return new OriginalityReportGenerator(threshold, 0, STUB, false, false, SentenceFrequency.disabled());
+        return new OriginalityReportGenerator(threshold, 0, STUB, false);
     }
 
     /** A candidate source with an unknown author. */
@@ -68,7 +67,7 @@ class OriginalityReportGeneratorTest {
 
         assertTrue(report(generator(0.9), query, sources).contains("class=\"match\""), "Without a floor the paraphrase matches");
 
-        OriginalityReportGenerator gated = new OriginalityReportGenerator(0.9, 0.8, STUB, false, false, SentenceFrequency.disabled());
+        OriginalityReportGenerator gated = new OriginalityReportGenerator(0.9, 0.8, STUB, false);
         String html = report(gated, query, sources);
         assertFalse(html.contains("class=\"match\""), "Sharing only the meaning should not survive a word-overlap floor");
         assertTrue(html.contains("No matching sources found"), "and the source should not be credited either");
@@ -76,7 +75,7 @@ class OriginalityReportGeneratorTest {
 
     @Test
     void testWordOverlapGateKeepsVerbatimReuse() {
-        OriginalityReportGenerator gated = new OriginalityReportGenerator(0.9, 0.8, STUB, false, false, SentenceFrequency.disabled());
+        OriginalityReportGenerator gated = new OriginalityReportGenerator(0.9, 0.8, STUB, false);
         String html = report(gated, "alpha quick brown fox", List.of(source("s", "alpha quick brown fox")));
 
         assertTrue(highlightsWithCategory(html, MatchCategory.COPY_PASTE), "Identical wording clears any floor");
@@ -120,8 +119,8 @@ class OriginalityReportGeneratorTest {
         String query = "alpha cited copy (Smith, 2020)|alpha bare copy here";
         List<ArchivedDocument> sources = List.of(source("s", "alpha thing"));
 
-        String shown = new OriginalityReportGenerator(0.9, 0, STUB, false, false, SentenceFrequency.disabled()).generate("q", query, sources, Set.of());
-        String hidden = new OriginalityReportGenerator(0.9, 0, STUB, true, false, SentenceFrequency.disabled()).generate("q", query, sources, Set.of());
+        String shown = new OriginalityReportGenerator(0.9, 0, STUB, false).generate("q", query, sources, Set.of());
+        String hidden = new OriginalityReportGenerator(0.9, 0, STUB, true).generate("q", query, sources, Set.of());
 
         assertTrue(shown.contains("class=\"match attributed\""), "Without exclude-attributed a cited match is shown (de-emphasized)");
         assertFalse(hidden.contains("class=\"match attributed\""), "With exclude-attributed, cited matches are not highlighted");
@@ -181,7 +180,7 @@ class OriginalityReportGeneratorTest {
             embedCalls.merge(text, 1, Integer::sum);
             return STUB.apply(text);
         };
-        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, 0, counting, false, false, SentenceFrequency.disabled());
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, 0, counting, false);
         List<ArchivedDocument> sources = List.of(source("shared", "alpha shared source"));
 
         generator.generate("q1", "alpha first query", sources, Set.of());
@@ -193,49 +192,14 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
-    void testReferenceListIsNeitherCheckedNorCounted() {
-        // Two body sentences, one of which matches, then a bibliography whose entries also match: without the section
-        // split the shared reading list would push the score up; with it the score is the body's 50%.
+    void testEverySentenceIsCheckedAndCounted() {
+        // Nothing is held back from the check: a reference-list entry matching a source is a match like any other, and
+        // the percentages are shares of the whole document.
         String query = "alpha copied body line|a body line unmatched|References|alpha Boas H 2025 Social Theory and Health";
-        String html = new OriginalityReportGenerator(0.9, 0, STUB, false, true, SentenceFrequency.disabled()).generate("q", query,
-                List.of(source("s", "alpha thing")), Set.of());
+        String html = report(generator(0.9), query, List.of(source("s", "alpha thing")));
 
-        assertTrue(html.contains("class=\"skipped\" title=\"Not checked: reference list\">alpha Boas H 2025 Social Theory and Health</span>"),
-                "The reference entry should be greyed out as not checked, not highlighted as a match");
-        assertEquals(1, html.split("class=\"match", -1).length - 1, "Only the body sentence should be a match");
-        assertTrue(html.contains("Paraphrase <b>50%</b>"), "The score should be a share of the body only, not of the whole document");
-    }
-
-    @Test
-    void testCoverSheetIsNotChecked() {
-        String query = "Module Code SD2005 and Module Title|Student ID Number 240009742 word count 1200|alpha the body starts here";
-        String html = new OriginalityReportGenerator(0.9, 0, STUB, true, true, SentenceFrequency.disabled()).generate("q", query,
-                List.of(source("s", "alpha thing")), Set.of());
-
-        assertTrue(html.contains("class=\"skipped\" title=\"Not checked: cover sheet / front matter\""), "The cover sheet should not be checked");
-        assertTrue(html.contains("Cover sheet / references / tables / shared text (of document)"), "The legend should report how much was skipped");
-    }
-
-    @Test
-    void testSentenceSharedWithTheCohortIsNotChecked() {
-        SentenceFrequency shared = SentenceFrequency.of(Collections.nCopies(20, "alpha the assignment brief says to measure vehicle access"),
-                text -> List.of(text), 0.10);
-        String query = "alpha the assignment brief says to measure vehicle access|alpha this line is the student's own writing";
-        String html = new OriginalityReportGenerator(0.9, 0, STUB, false, false, shared).generate("q", query, List.of(source("s", "alpha thing")),
-                Set.of());
-
-        assertTrue(html.contains("class=\"skipped\" title=\"Not checked: shared with much of the cohort\""),
-                "A sentence most of the cohort submitted is given material, not reuse");
-    }
-
-    @Test
-    void testASourcesCoverSheetIsNotAMatchCandidate() {
-        // The source's front matter is excluded on its side too, so it cannot be what a query sentence matches.
-        String coverSheet = "Module Code SD2005 alpha|Student ID Number 240009742 word count alpha|beta the source body";
-        String html = new OriginalityReportGenerator(0.9, 0, STUB, false, true, SentenceFrequency.disabled()).generate("q",
-                "alpha some body prose of the query", List.of(source("s", coverSheet)), Set.of());
-
-        assertFalse(html.contains("class=\"match\""), "Nothing should match a source's cover sheet");
+        assertEquals(2, html.split("class=\"match", -1).length - 1, "Both the body line and the reference entry should match");
+        assertFalse(html.contains("class=\"skipped\""), "No sentence should be left out of the check");
     }
 
     @Test

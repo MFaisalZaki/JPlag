@@ -182,8 +182,6 @@ apptainer run \
 | `AUTHOR_PATTERN` | `^([0-9]+)-` | regex taking the author (student id) from the file name; `''` disables author handling |
 | `COAUTHOR_PATTERN` | `\b2[0-9]{8}\b` | every match on a document's cover sheet is a co-author, so both members of a paired submission own it and neither is reported against the other; `''` disables |
 | `SAME_AUTHOR` | `exclude` | a student's own earlier work: `exclude` it, or `flag` it as self-reuse |
-| `COMMON_SENTENCE_SHARE` | `0.10` | a sentence appearing in more than this share of the coursework counts as given material (assignment brief, prescribed method, template) and is left out; `0` disables. Ignored below 10 documents |
-| `CHECK_ALL_SECTIONS` | `0` | `1` also checks cover sheets and reference lists. They are identical across a cohort by design, so this scores everything highly and shows nothing |
 | `FLAG_THRESHOLD` | `20` | matched % at or above which a document counts as *flagged* in the statistics. Everything still gets a report; this sets the size of the queue a marker reads |
 | `KEEP_INDEX` | `1` | `0` deletes each coursework's index after the check, to save disk |
 | `RESUME` | `0` | `1` skips courseworks already recorded in `stats.csv` |
@@ -313,11 +311,11 @@ cache at `/opt/djl-cache`. Do not override `DJL_CACHE_DIR`, and be careful with
 300 MB download onto a login node).
 
 **Everything is flagged.** Expected on a single-prompt cohort at a low
-threshold, and the reason the defaults are what they are. Check
-`CHECK_ALL_SECTIONS` is `0` (cover sheets and bibliographies are identical
-across a cohort by design) and `COMMON_SENTENCE_SHARE` is non-zero (it strips
-the assignment brief), then raise `FLAG_THRESHOLD` to shorten the queue rather
-than lowering `SENTENCE_THRESHOLD`.
+threshold, and the reason the defaults are what they are. Note that nothing is
+held back from the check: a cohort's cover sheets, assignment brief and
+bibliographies are identical by design and are counted like any other match, so
+a share of every score is theirs. Raise `FLAG_THRESHOLD` to shorten the queue
+rather than lowering `SENTENCE_THRESHOLD`.
 
 **Out of memory / the JVM is thrashing.** The default heap is a quarter of the
 node's RAM, which is thin on a shared node. Set

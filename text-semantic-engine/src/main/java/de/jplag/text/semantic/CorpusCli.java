@@ -139,16 +139,6 @@ public class CorpusCli implements Runnable {
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
 
-        @Option(names = "--check-all-sections", description = "Also check cover sheets and reference lists. By default only "
-                + "the body is checked: a cohort's cover sheets and bibliographies are identical by design, so matching them "
-                + "scores every submission highly and shows nothing.")
-        private boolean checkAllSections;
-
-        @Option(names = "--common-sentence-share", defaultValue = "0.10", description = "Share of the query set above which a "
-                + "sentence counts as shared material (assignment brief, prescribed method, template) and is left out of the "
-                + "check. 0 disables this. Ignored for fewer than 10 query documents, where the share means nothing. " + "Default: ${DEFAULT-VALUE}.")
-        private double commonSentenceShare;
-
         @Option(names = "--author", defaultValue = "", description = "Author of the query document(s); matches to the same "
                 + "author's indexed work are flagged as self-plagiarism.")
         private String queryAuthor;
@@ -179,8 +169,7 @@ public class CorpusCli implements Runnable {
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, minimumWordOverlap, sbert::embedSentencesWithText, !showAttributed,
-                                !checkAllSections, commonSentences(queries, sbert));
+                        : new OriginalityReportGenerator(sentenceThreshold, minimumWordOverlap, sbert::embedSentencesWithText, !showAttributed);
                 // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
                 // results; it just no longer decides which documents get compared at all.
                 int comparedDocuments = topK > 0 ? topK : index.size();
@@ -192,24 +181,6 @@ public class CorpusCli implements Runnable {
                 }
             }
             return 0;
-        }
-
-        /**
-         * Counts how often each sentence occurs across the query set, so that sentences most of a cohort submitted can be left
-         * out of the check. The query set is the cohort: a coursework is checked by querying every submission against the index
-         * of the same submissions.
-         */
-        private SentenceFrequency commonSentences(List<AnalyzedSubmission> queries, SbertEmbedder sbert) {
-            if (sbert == null || commonSentenceShare <= 0) {
-                return SentenceFrequency.disabled();
-            }
-            SentenceFrequency frequency = SentenceFrequency.of(queries.stream().map(AnalyzedSubmission::text).toList(), sbert::splitSentences,
-                    commonSentenceShare);
-            if (frequency.isEnabled()) {
-                System.out.printf("Sentences shared by more than %.0f%% of the %d query document(s) are treated as given material.%n",
-                        commonSentenceShare * 100, queries.size());
-            }
-            return frequency;
         }
 
         private void report(LuceneCorpusIndex index, OriginalityReportGenerator generator, AnalyzedSubmission query, Set<String> authors,

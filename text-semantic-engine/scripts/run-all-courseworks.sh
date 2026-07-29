@@ -54,12 +54,6 @@
 #   SAME_AUTHOR=<exclude|flag>      matches to the same author's other work:
 #                                   'exclude' (default) drops them, 'flag' shows
 #                                   them as self-reuse.
-#   COMMON_SENTENCE_SHARE=<0-1>     share of a coursework above which a sentence
-#                                   counts as given material (assignment brief,
-#                                   prescribed method, template) and is left out
-#                                   of the check (default: 0.10); 0 disables it.
-#   CHECK_ALL_SECTIONS=<1|0>        1 also checks cover sheets and reference
-#                                   lists (default: 0).
 #   FLAG_THRESHOLD=<0-100>          matched percentage at or above which a
 #                                   document is counted as flagged in the
 #                                   statistics (default: 20). Documents below it
@@ -89,7 +83,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,86p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,79p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -110,8 +104,6 @@ AUTHOR_PATTERN="${AUTHOR_PATTERN-^([0-9]+)-}"
 DEFAULT_COAUTHOR_PATTERN='\b2[0-9]{8}\b'
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN-$DEFAULT_COAUTHOR_PATTERN}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
-COMMON_SENTENCE_SHARE="${COMMON_SENTENCE_SHARE:-0.10}"
-CHECK_ALL_SECTIONS="${CHECK_ALL_SECTIONS:-0}"
 FLAG_THRESHOLD="${FLAG_THRESHOLD:-20}"
 KEEP_INDEX="${KEEP_INDEX:-1}"
 RESUME="${RESUME:-0}"
@@ -276,7 +268,7 @@ for relative in "${COURSEWORKS[@]}"; do
   query_peak=0
   query_status=0
   if [[ "$index_status" -eq 0 ]]; then
-    export BACKEND TOP_K SENTENCE_THRESHOLD SAME_AUTHOR COMMON_SENTENCE_SHARE CHECK_ALL_SECTIONS
+    export BACKEND TOP_K SENTENCE_THRESHOLD SAME_AUTHOR
     measure "$log" "$SCRIPT_DIR/run-plagiarism.sh" "$source_dir" "$result_dir/index" "$result_dir"
     query_seconds="$MEASURED_SECONDS"
     query_peak="$MEASURED_PEAK_MB"
@@ -319,7 +311,7 @@ ELAPSED_ALL=$((SECONDS - START_ALL))
 {
   echo "Plagiarism check — $DATASET_ROOT"
   echo "backend=$BACKEND  top-k=$TOP_K  sentence-threshold=$SENTENCE_THRESHOLD  same-author=$SAME_AUTHOR"
-  echo "common-sentence-share=$COMMON_SENTENCE_SHARE  check-all-sections=$CHECK_ALL_SECTIONS  flag-threshold=${FLAG_THRESHOLD}%"
+  echo "flag-threshold=${FLAG_THRESHOLD}%"
   echo
   echo "PER COURSEWORK"
   {

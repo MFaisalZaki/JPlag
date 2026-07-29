@@ -69,13 +69,8 @@ public class SbertEmbedder implements DocumentEmbedder {
         return sentences;
     }
 
-    /**
-     * Splits a text into the same sentences {@link #embedSentencesWithText} would embed, without embedding them — for
-     * counting how often a sentence occurs across a cohort, which needs the text only.
-     * @param text the document text.
-     * @return the sentences, in order.
-     */
-    public List<String> splitSentences(String text) {
+    /** The text's sentences, in order, dropping the ones too short to embed reliably. */
+    private List<String> splitSentences(String text) {
         List<String> sentences = new ArrayList<>();
         CoreDocument document = sentencePipeline.processToCoreDocument(text);
         for (CoreSentence sentence : document.sentences()) {
@@ -106,7 +101,7 @@ public class SbertEmbedder implements DocumentEmbedder {
     }
 
     /** Scales a vector to unit length, so that a dot product of two such vectors is their cosine similarity. */
-    static float[] normalize(float[] vector) {
+    private static float[] normalize(float[] vector) {
         double norm = 0.0;
         for (float value : vector) {
             norm += value * value;

@@ -39,15 +39,6 @@
 #                                   own indexed work: 'exclude' (default) drops
 #                                   them (a resubmission is then not reported at
 #                                   all), 'flag' marks them as self-plagiarism.
-#   COMMON_SENTENCE_SHARE=<0-1>     share of the checked set above which a
-#                                   sentence counts as given material (assignment
-#                                   brief, prescribed method, template) and is
-#                                   left out of the check (default: 0.10). 0
-#                                   disables it; it is ignored below 10 documents.
-#   CHECK_ALL_SECTIONS=<1|0>        1 also checks cover sheets and reference
-#                                   lists (default: 0). They are identical across
-#                                   a cohort by design, so checking them scores
-#                                   every submission highly and shows nothing.
 #   MINIMUM_WORD_OVERLAP=<0-1>      literal word overlap a match must reach on
 #                                   top of the sentence threshold (default: 0).
 #                                   Leave at 0 when the index holds the cohort's
@@ -71,7 +62,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,57p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 3 ]] || { usage; die "expected 3 arguments, got $#."; }
@@ -93,8 +84,6 @@ AUTHOR="${AUTHOR:-}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
-COMMON_SENTENCE_SHARE="${COMMON_SENTENCE_SHARE:-0.10}"
-CHECK_ALL_SECTIONS="${CHECK_ALL_SECTIONS:-0}"
 MINIMUM_WORD_OVERLAP="${MINIMUM_WORD_OVERLAP:-0}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
 
@@ -116,7 +105,6 @@ SUMMARY_FILE="$RESULTS_DIR/matches.txt"
 ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
       --backend "$BACKEND" --top-k "$TOP_K_ARG"
       --sentence-threshold "$SENTENCE_THRESHOLD"
-      --common-sentence-share "$COMMON_SENTENCE_SHARE"
       --minimum-word-overlap "$MINIMUM_WORD_OVERLAP"
       --extensions "$(extensions_csv)"
       --html-report "$REPORTS_DIR")
@@ -124,7 +112,6 @@ ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")
 [[ -n "$COAUTHOR_PATTERN" ]] && ARGS+=(--coauthor-pattern "$COAUTHOR_PATTERN")
 [[ "$SAME_AUTHOR" == "flag" ]] && ARGS+=(--no-exclude-same-author)
-[[ "$CHECK_ALL_SECTIONS" == "1" ]] && ARGS+=(--check-all-sections)
 
 echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD)…"
 # Tee the ranked-match console output into the results directory as well.
