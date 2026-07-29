@@ -128,6 +128,13 @@ public class CorpusCli implements Runnable {
                 + "shared subject matter rather than reuse. Default: ${DEFAULT-VALUE}.")
         private double sentenceThreshold;
 
+        @Option(names = "--minimum-word-overlap", defaultValue = "0", description = "Literal word overlap (Jaccard, 0-1) a "
+                + "match must reach in addition to the sentence threshold. 0 (the default) lets semantic similarity alone "
+                + "decide, which is right when the sources are the cohort's own submissions. Raise it — 0.4 for lightly "
+                + "edited wording, 0.8 for near-verbatim — when the index holds published or reference material, where a "
+                + "subject's standard sentences match everyone who wrote about it correctly. Default: ${DEFAULT-VALUE}.")
+        private double minimumWordOverlap;
+
         @Option(names = "--show-attributed", description = "Also highlight quoted/cited matches (de-emphasized). By default "
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
@@ -172,8 +179,8 @@ public class CorpusCli implements Runnable {
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, sbert::embedSentencesWithText, !showAttributed, !checkAllSections,
-                                commonSentences(queries, sbert));
+                        : new OriginalityReportGenerator(sentenceThreshold, minimumWordOverlap, sbert::embedSentencesWithText, !showAttributed,
+                                !checkAllSections, commonSentences(queries, sbert));
                 // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
                 // results; it just no longer decides which documents get compared at all.
                 int comparedDocuments = topK > 0 ? topK : index.size();

@@ -85,6 +85,42 @@ from literal word overlap and is the signal to weigh. Note also that a cohort's
 shared assignment cover sheet matches near-perfectly and will dominate a report
 unless it is stripped from the documents beforehand.
 
+`MINIMUM_WORD_OVERLAP=<0-1>` (default `0`) turns that reading into a filter:
+a match must share that share of its wording as well as clearing the sentence
+threshold. Leave it at `0` against the cohort's own submissions — two students
+share wording only by copying. Raise it against published or reference material,
+where they do not: measured against six Wikipedia articles, a 40-submission
+enzyme-kinetics cohort produced 32 matches at `0`, every one of them a standard
+definition stated correctly ("Km is the substrate concentration at which the
+velocity is half of Vmax") and none of them copied. All 32 were classified
+*paraphrase*; none were *copy-paste*. `0.4` removes them.
+
+## Checking against the sources a cohort cites
+
+The papers in a cohort's reference lists are the papers its students read, which
+is where copied text comes from. That makes the bibliography a better source
+corpus than a topic search, which returns the documents most likely to be *about*
+the same subject — exactly the property that produces false positives. It is also
+the only web-facing step that keeps student work inside the building: what leaves
+is a DOI, never a submission.
+
+```bash
+# after a normal run, mine its reports for cited works
+OPENALEX_MAILTO=you@example.ac.uk \
+  scripts/bibliography-corpus.py ./results/reports ./cited-corpus
+
+scripts/build-database.sh ./cited-corpus ./cited-index
+MINIMUM_WORD_OVERLAP=0.4 \
+  scripts/run-plagiarism.sh ./submissions ./cited-index ./cited-results
+```
+
+Two caveats worth knowing before reading the output. The corpus is built from
+abstracts, so it tests whether a submission reproduces a paper's *abstract*, not
+its body — and it only covers sources a student was willing to name. And leave
+`KEEP_TITLES` off: a reference-list entry is a title, so a corpus containing
+titles matches every correctly formatted bibliography at 100% and reads like mass
+plagiarism.
+
 ## One-shot: check a self-contained dataset
 
 ```bash

@@ -69,7 +69,7 @@ public final class DocumentSections {
     private static final int MINIMUM_COVER_SHEET_MARKERS = 2;
     /** Consecutive sentences that must look like bibliography entries before the run counts as a reference block. */
     private static final int MINIMUM_ENTRY_RUN = 3;
-    /** Share of a run that must carry an entry marker; the rest are the article titles between them. */
+    /** Share of a run that must look like part of an entry — a citation shape or a data line — rather than prose. */
     private static final double MINIMUM_ENTRY_DENSITY = 0.5;
 
     /** Share of a sentence's words that may carry a digit before it is data rather than prose. */
@@ -122,6 +122,13 @@ public final class DocumentSections {
      * worksheet it is the answer to a numbered question, and in a footnoted essay it is a block at the end of a page. A run
      * of entries is recognisable without a heading because bibliographic shapes cluster — and the article titles between
      * them, which look like ordinary prose on their own, are carried along by the run they sit in.
+     * <p>
+     * A run continues over a data-shaped line as well as over a citation-shaped one. Sentence splitting cuts an entry into
+     * an author-and-year line, a title, and a journal-and-pages line, and only the first carries a shape
+     * {@link #ENTRY_MARKER} recognises: "Computers &amp; Education, 239, 1–15." is data, not a citation. Ending a run at
+     * the last citation shape therefore strands the title of whichever entry closes the block — and the title is the one
+     * part of an entry that reads like a sentence, so it is exactly what matches when the corpus being searched is itself
+     * made of titles and abstracts.
      */
     private static void markEntryRuns(List<String> sentences, List<Section> sections) {
         int start = 0;
@@ -132,17 +139,21 @@ public final class DocumentSections {
             }
             int end = start;
             int markers = 0;
+            int entryLines = 0;
             for (int i = start; i < sentences.size(); i++) {
-                boolean marker = ENTRY_MARKER.matcher(sentences.get(i)).find();
-                if (marker) {
+                if (ENTRY_MARKER.matcher(sentences.get(i)).find()) {
                     markers++;
+                    entryLines++;
+                    end = i;
+                } else if (isTabular(sentences.get(i))) {
+                    entryLines++;
                     end = i;
                 } else if (i - end > 1) {
-                    break; // two non-entry sentences in a row: the block has ended
+                    break; // two sentences of prose in a row: the block has ended
                 }
             }
             int length = end - start + 1;
-            if (length >= MINIMUM_ENTRY_RUN && markers >= MINIMUM_ENTRY_DENSITY * length) {
+            if (length >= MINIMUM_ENTRY_RUN && entryLines >= MINIMUM_ENTRY_DENSITY * length) {
                 for (int i = start; i <= end; i++) {
                     if (sections.get(i) == Section.BODY) {
                         sections.set(i, Section.REFERENCES);

@@ -75,6 +75,22 @@ class DocumentSectionsTest {
     }
 
     @Test
+    void testTitleClosingAReferenceBlockIsNotLeftBehind() {
+        // Taken from a real PN1001 worksheet. The entry's journal line is data rather than a citation shape, so the run
+        // used to end at the DOI above the title and leave the title itself checkable — and a title is precisely what
+        // matches when the corpus being searched is made of paper titles and abstracts.
+        List<String> worksheet = List.of("Journal of Leadership Studies, 18(4), 81-97.", "https://doi.org/10.1002/jls.70004 Lee, C. (2025).",
+                "Virtual internships as alternative work-based learning: Examining access, quality, and outcomes for underserved students.",
+                "Computers & Education, 239, 1-15.", "The ability to follow gaze is a developmental process important to many species.",
+                "This study asked whether that ability depends on familiarity with the species being observed.");
+        List<Section> sections = DocumentSections.of(worksheet);
+
+        assertEquals(List.of(Section.REFERENCES, Section.REFERENCES, Section.REFERENCES, Section.REFERENCES), sections.subList(0, 4),
+                "The whole entry, its title included, is the reference list");
+        assertEquals(List.of(Section.BODY, Section.BODY), sections.subList(4, 6), "The prose after the block is still the student's own");
+    }
+
+    @Test
     void testCitedProseIsNotMistakenForAReferenceBlock() {
         // Three consecutive sentences each carrying a parenthetical citation are a well-referenced paragraph, not a
         // bibliography, and must stay checkable.

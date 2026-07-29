@@ -48,6 +48,7 @@ public class OriginalityReportGenerator {
     private static final String SELF_REUSE_COLOUR = "#e1bee7";
 
     private final double matchThreshold;
+    private final double minimumWordOverlap;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
     private final boolean excludeAttributed;
     private final boolean excludeNonBodySections;
@@ -58,6 +59,11 @@ public class OriginalityReportGenerator {
     /**
      * Creates the generator.
      * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.85).
+     * @param minimumWordOverlap the minimum literal word overlap (Jaccard) a match must also reach, in {@code [0, 1]}; 0
+     * accepts any wording, so semantic similarity alone decides. Raise it when the sources are not the cohort's own work:
+     * two students writing about one subject share wording only by copying, but a student and a textbook share the
+     * subject's standard sentences ("Km is the substrate concentration at which the velocity is half of Vmax") without
+     * either having copied anything. Against such a corpus the embedding finds the candidate and the wording has to decide.
      * @param sentenceEmbedder splits a text into sentences and embeds them (e.g.
      * {@code SbertEmbedder::embedSentencesWithText}).
      * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted (only concerns are shown).
@@ -65,9 +71,11 @@ public class OriginalityReportGenerator {
      * @param commonSentences the cohort's sentence frequencies, whose common sentences are left out of the check; pass
      * {@link SentenceFrequency#disabled()} to keep them.
      */
-    public OriginalityReportGenerator(double matchThreshold, Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed,
-            boolean excludeNonBodySections, SentenceFrequency commonSentences) {
+    public OriginalityReportGenerator(double matchThreshold, double minimumWordOverlap,
+            Function<String, List<EmbeddedSentence>> sentenceEmbedder, boolean excludeAttributed, boolean excludeNonBodySections,
+            SentenceFrequency commonSentences) {
         this.matchThreshold = matchThreshold;
+        this.minimumWordOverlap = minimumWordOverlap;
         this.sentenceEmbedder = sentenceEmbedder;
         this.excludeAttributed = excludeAttributed;
         this.excludeNonBodySections = excludeNonBodySections;
@@ -211,8 +219,9 @@ public class OriginalityReportGenerator {
                     }
                 }
             }
-            boolean matched = bestSentence != null && bestScore >= matchThreshold;
-            MatchCategory category = matched ? MatchCategory.fromWordOverlap(wordOverlap(querySentence.text(), bestSentence)) : null;
+            double overlap = bestSentence == null ? 0.0 : wordOverlap(querySentence.text(), bestSentence);
+            boolean matched = bestSentence != null && bestScore >= matchThreshold && overlap >= minimumWordOverlap;
+            MatchCategory category = matched ? MatchCategory.fromWordOverlap(overlap) : null;
             String nextSentence = i + 1 < querySentences.size() ? querySentences.get(i + 1).text() : "";
             CitationDetector.AttributionCheck check = matched ? attributionWithLookahead(querySentence.text(), nextSentence) : null;
             boolean selfReuse = matched && !Collections.disjoint(queryAuthors, bestAuthors);
@@ -375,7 +384,10 @@ public class OriginalityReportGenerator {
                         + "(marked ✓) and is the actual plagiarism concern. ")
                 .append("Matches marked ↺ reuse the submitter's own prior work (self-plagiarism). Matches are semantic (SBERT, threshold ")
                 .append(String.format(Locale.ROOT, "%.2f", matchThreshold))
-                .append("); the type comes from literal word overlap. Greyed-out text was not checked (cover sheet, reference list, table data, or "
+                .append(minimumWordOverlap > 0
+                        ? String.format(Locale.ROOT, ", and must also share at least %.0f%% of their wording)", minimumWordOverlap * 100)
+                        : ")")
+                .append("; the type comes from literal word overlap. Greyed-out text was not checked (cover sheet, reference list, table data, or "
                         + "a sentence much of the cohort submitted) and is excluded from the percentages, which are shares of the remaining text. On a set of "
                         + "documents about one subject some similarity is expected, so read a match as evidence only where the wording, not merely "
                         + "the subject, is shared. Click a highlight to jump to the matched passage in the source below; click the passage to jump "

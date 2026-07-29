@@ -48,6 +48,18 @@
 #                                   lists (default: 0). They are identical across
 #                                   a cohort by design, so checking them scores
 #                                   every submission highly and shows nothing.
+#   MINIMUM_WORD_OVERLAP=<0-1>      literal word overlap a match must reach on
+#                                   top of the sentence threshold (default: 0).
+#                                   Leave at 0 when the index holds the cohort's
+#                                   own submissions. Raise it — 0.4 for lightly
+#                                   edited, 0.8 for near-verbatim — when the index
+#                                   holds published or reference material: a
+#                                   subject's standard sentences ("Km is the
+#                                   substrate concentration at which the velocity
+#                                   is half of Vmax") are semantically identical
+#                                   for everyone who states them correctly, so
+#                                   there the wording has to decide, not the
+#                                   embedding.
 #
 # Examples:
 #   scripts/run-plagiarism.sh ./new-submissions ./corpus-index ./results
@@ -83,6 +95,7 @@ COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 COMMON_SENTENCE_SHARE="${COMMON_SENTENCE_SHARE:-0.10}"
 CHECK_ALL_SECTIONS="${CHECK_ALL_SECTIONS:-0}"
+MINIMUM_WORD_OVERLAP="${MINIMUM_WORD_OVERLAP:-0}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
 
 require_java
@@ -104,6 +117,7 @@ ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
       --backend "$BACKEND" --top-k "$TOP_K_ARG"
       --sentence-threshold "$SENTENCE_THRESHOLD"
       --common-sentence-share "$COMMON_SENTENCE_SHARE"
+      --minimum-word-overlap "$MINIMUM_WORD_OVERLAP"
       --extensions "$(extensions_csv)"
       --html-report "$REPORTS_DIR")
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
