@@ -12,6 +12,7 @@ import ai.djl.training.util.ProgressBar;
 import edu.stanford.nlp.pipeline.CoreDocument;
 import edu.stanford.nlp.pipeline.CoreSentence;
 import edu.stanford.nlp.pipeline.StanfordCoreNLP;
+import edu.stanford.nlp.util.Pair;
 
 /**
  * A long-lived SBERT embedder (all-MiniLM-L6-v2 via DJL) that keeps the model loaded so it can embed many documents
@@ -56,26 +57,20 @@ public class SbertEmbedder implements DocumentEmbedder {
     }
 
     /**
-     * Embeds every sentence of the text, keeping the sentence text alongside its unit-length vector.
+     * Embeds every sentence of the text, keeping each sentence's text and its position in the document alongside its
+     * unit-length vector. Sentences too short to embed reliably are dropped; their character range simply stays unclaimed,
+     * so a report can still render that part of the document as ordinary text.
      * @param text the document text.
-     * @return the embedded sentences.
+     * @return the embedded sentences, in document order.
      * @throws IllegalStateException if embedding fails.
      */
     public List<EmbeddedSentence> embedSentencesWithText(String text) {
         List<EmbeddedSentence> sentences = new ArrayList<>();
-        for (String sentence : splitSentences(text)) {
-            sentences.add(new EmbeddedSentence(sentence, embedSentence(sentence)));
-        }
-        return sentences;
-    }
-
-    /** The text's sentences, in order, dropping the ones too short to embed reliably. */
-    private List<String> splitSentences(String text) {
-        List<String> sentences = new ArrayList<>();
         CoreDocument document = sentencePipeline.processToCoreDocument(text);
         for (CoreSentence sentence : document.sentences()) {
             if (sentence.tokens().size() >= MINIMUM_SENTENCE_TOKENS) {
-                sentences.add(sentence.text());
+                Pair<Integer, Integer> offsets = sentence.charOffsets();
+                sentences.add(new EmbeddedSentence(sentence.text(), embedSentence(sentence.text()), offsets.first(), offsets.second()));
             }
         }
         return sentences;

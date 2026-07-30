@@ -62,4 +62,25 @@ class PdfIngestionTest {
         assertTrue(extracted.contains("Photosynthesis"), "Extracted text should contain the original words");
         assertTrue(extracted.contains("glucose"), "Extracted text should contain the original words");
     }
+
+    @Test
+    void testLayoutIsTidiedWithoutReflowingTheDocument() {
+        // The report renders this text as the document, so its line and paragraph breaks are kept exactly; only the
+        // artefacts of extraction go.
+        String extracted = "First line   \nsecond line\n \n \n \nA new paragraph\n";
+
+        String normalized = PdfTextExtractor.normalizeLayout(extracted);
+
+        assertEquals("First line\nsecond line\n\nA new paragraph", normalized,
+                "Trailing spaces and the blank run left by a page break go; the line and paragraph breaks stay");
+    }
+
+    @Test
+    void testWordHyphenatedAcrossALineBreakIsRejoined() {
+        // "Renais-\nsance" would otherwise be indexed as two non-words and embed as neither.
+        assertEquals("The Renaissance began", PdfTextExtractor.normalizeLayout("The Renais-\nsance began"),
+                "A word the PDF split across a line break should be put back together");
+        assertEquals("A well-\nKnown subject", PdfTextExtractor.normalizeLayout("A well-\nKnown subject"),
+                "A hyphen before a capital is a real hyphen at a line end, not a split word");
+    }
 }

@@ -79,7 +79,9 @@ The index is **incremental**: run `index` again against the same `--index` direc
 - an **overall similarity score** and, separately, an **unattributed score** — the share of matched words that are *not* quoted or cited, i.e. the actual plagiarism concern,
 - a **category breakdown** — each match classified by how much of the *literal wording* it shares with its source: **Copy-paste** (near-identical), **Lightly edited**, or **Paraphrase** (same meaning, different words),
 - a **ranked list of sources** with their contribution percentage,
-- the **query text with matched sentences highlighted** inline, colour-coded by category; hovering shows the category, attribution status, source, and similarity, and clicking jumps to the matched passage in the source rendered below (and back).
+- the **document itself, with matched sentences highlighted** inline and colour-coded by category; hovering shows the category, attribution status, source, and similarity, and clicking jumps to the matched passage in the source rendered below (and back).
+
+The document is rendered **as it was submitted**: its paragraphs, line breaks, cover sheet, headings and the short lines that are never long enough to check are all there, with the matched sentences highlighted where they sit. What is *not* reproduced is the page itself — fonts, images, tables as tables — because the engine works on the extracted text, so a report is a faithful plain-text rendering of the document rather than a facsimile of it. Percentages are shares of that whole document's words, including the parts that were never candidates for a match.
 
 Two orthogonal signals drive it. The **category** combines high *semantic* similarity (why it matched) with *lexical* overlap (Jaccard of the sentences' words), separating copied wording from genuine rewording. The **attribution** status ([CitationDetector](src/main/java/de/jplag/text/semantic/CitationDetector.java)) checks each matched sentence for quotation marks or a citation — `(Author, 2020)`, `[3]`, a URL, or a DOI — so acknowledged reuse is separated from unacknowledged reuse.
 

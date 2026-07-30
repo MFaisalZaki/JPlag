@@ -70,11 +70,11 @@ public class OriginalityReportGenerator {
         this.excludeAttributed = excludeAttributed;
     }
 
-    private record SourceDocument(String id, Set<String> authors, List<EmbeddedSentence> sentences) {
+    private record SourceDocument(String id, Set<String> authors, String text, List<EmbeddedSentence> sentences) {
     }
 
-    private record Attribution(String text, String sourceId, String sourceSentence, int sourceSentenceIndex, double score, MatchCategory category,
-            AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched) {
+    private record Attribution(String text, int begin, int end, String sourceId, String sourceSentence, int sourceSentenceIndex, double score,
+            MatchCategory category, AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean matched) {
 
         // Whether this match should be highlighted and counted (a match that is not an excluded attributed one).
         boolean reported(boolean excludeAttributed) {
@@ -98,11 +98,11 @@ public class OriginalityReportGenerator {
         List<EmbeddedSentence> querySentences = sentenceEmbedder.apply(queryText);
         List<SourceDocument> sourceDocuments = new ArrayList<>();
         for (ArchivedDocument source : sources) {
-            sourceDocuments.add(new SourceDocument(source.id(), source.authors(), sentencesOf(source.id(), source.text())));
+            sourceDocuments.add(new SourceDocument(source.id(), source.authors(), source.text(), sentencesOf(source.id(), source.text())));
         }
 
         List<Attribution> attributions = attribute(querySentences, sourceDocuments, queryAuthors);
-        Totals totals = totals(attributions);
+        Totals totals = totals(attributions, queryText);
 
         List<String> orderedSources = totals.wordsPerSource().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .map(Map.Entry::getKey).toList();
@@ -111,7 +111,7 @@ public class OriginalityReportGenerator {
             rankOf.put(orderedSources.get(i), i + 1);
         }
 
-        return renderHtml(queryId, totals, attributions, sourceDocuments, orderedSources, rankOf, !queryAuthors.isEmpty());
+        return renderHtml(queryId, queryText, totals, attributions, sourceDocuments, orderedSources, rankOf, !queryAuthors.isEmpty());
     }
 
     /**
@@ -154,8 +154,9 @@ public class OriginalityReportGenerator {
             String nextSentence = i + 1 < querySentences.size() ? querySentences.get(i + 1).text() : "";
             CitationDetector.AttributionCheck check = matched ? attributionWithLookahead(querySentence.text(), nextSentence) : null;
             boolean selfReuse = matched && !Collections.disjoint(queryAuthors, bestAuthors);
-            attributions.add(new Attribution(querySentence.text(), matched ? bestSource : null, bestSentence, bestIndex, bestScore, category,
-                    check == null ? null : check.status(), check == null ? null : check.evidence(), selfReuse, matched));
+            attributions.add(new Attribution(querySentence.text(), querySentence.begin(), querySentence.end(), matched ? bestSource : null,
+                    bestSentence, bestIndex, bestScore, category, check == null ? null : check.status(), check == null ? null : check.evidence(),
+                    selfReuse, matched));
         }
         return attributions;
     }
@@ -173,9 +174,14 @@ public class OriginalityReportGenerator {
         return next.status() == AttributionStatus.CITED ? next : self;
     }
 
-    /** Adds up the report's percentages, all of them shares of the document's total word count. */
-    private Totals totals(List<Attribution> attributions) {
-        int totalWords = attributions.stream().mapToInt(attribution -> wordCount(attribution.text())).sum();
+    /**
+     * Adds up the report's percentages, all of them shares of the <em>whole</em> document's word count — including the
+     * headings, table cells and short lines that are never long enough to be checked as sentences. The report renders the
+     * document in full, so its percentages have to be shares of what a reader can see; counting only the checked sentences
+     * would quietly divide by about 97% of the document and read a little high.
+     */
+    private Totals totals(List<Attribution> attributions, String queryText) {
+        int totalWords = wordCount(queryText);
         Map<String, Integer> wordsPerSource = new LinkedHashMap<>();
         Map<MatchCategory, Integer> wordsPerCategory = new EnumMap<>(MatchCategory.class);
         int matchedWords = 0;
@@ -209,6 +215,25 @@ public class OriginalityReportGenerator {
                 wordsPerCategory, wordsPerSource, totalWords);
     }
 
+    /**
+     * Appends the document's own text between two positions — the whitespace, headings and short unchecked lines that sit
+     * around the sentences — and returns the position it advanced to.
+     */
+    private static int appendGap(StringBuilder html, String text, int from, int to) {
+        if (from >= 0 && from < to && to <= text.length()) {
+            html.append(escape(text.substring(from, to)));
+            return to;
+        }
+        return from;
+    }
+
+    /**
+     * A sentence as it stands in the document, falling back to the splitter's own copy if the offsets do not fit the text.
+     */
+    private static String textOf(String documentText, int begin, int end, String fallback) {
+        return begin >= 0 && begin < end && end <= documentText.length() ? documentText.substring(begin, end) : fallback;
+    }
+
     /** Anchor of the highlighted query sentence at this attribution index (for jumping back from the source passage). */
     private static String queryAnchor(int attributionIndex) {
         return "q" + attributionIndex;
@@ -219,7 +244,7 @@ public class OriginalityReportGenerator {
         return "m-" + sourceRank + "-" + sentenceIndex;
     }
 
-    private String renderHtml(String queryId, Totals totals, List<Attribution> attributions, List<SourceDocument> sources,
+    private String renderHtml(String queryId, String queryText, Totals totals, List<Attribution> attributions, List<SourceDocument> sources,
             List<String> orderedSources, Map<String, Integer> rankOf, boolean authorKnown) {
         StringBuilder html = new StringBuilder();
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
@@ -258,9 +283,14 @@ public class OriginalityReportGenerator {
             }
         }
 
+        // The document is rendered from its own text, with the matched sentences wrapped where they sit, so everything
+        // between them - blank lines, headings, table rows, the short lines that are never checked - survives intact.
         html.append("<div class=\"layout\"><main>");
+        int cursor = 0;
         for (int i = 0; i < attributions.size(); i++) {
             Attribution attribution = attributions.get(i);
+            cursor = appendGap(html, queryText, cursor, attribution.begin());
+            String sentence = escape(textOf(queryText, attribution.begin(), attribution.end(), attribution.text()));
             if (attribution.reported(excludeAttributed)) {
                 boolean attributed = attribution.attribution().isAttributed();
                 String background = attribution.selfReuse() ? SELF_REUSE_COLOUR : attribution.category().colour();
@@ -268,18 +298,20 @@ public class OriginalityReportGenerator {
                 html.append("<a class=\"match").append(attributed ? " attributed" : "").append(attribution.selfReuse() ? " self" : "")
                         .append("\" style=\"background:").append(background).append("\" title=\"").append(escape(tooltip(attribution, rank)))
                         .append("\" id=\"").append(queryAnchor(i)).append("\" href=\"#")
-                        .append(passageAnchor(rank, attribution.sourceSentenceIndex())).append("\">").append(escape(attribution.text()));
+                        .append(passageAnchor(rank, attribution.sourceSentenceIndex())).append("\">").append(sentence);
                 if (attribution.selfReuse()) {
                     html.append("<sup class=\"self-mark\">↺</sup>");
                 }
                 if (attributed) {
                     html.append("<sup class=\"att\">✓</sup>");
                 }
-                html.append("<sup>").append(rank).append("</sup></a> ");
+                html.append("<sup>").append(rank).append("</sup></a>");
             } else {
-                html.append("<span>").append(escape(attribution.text())).append("</span> ");
+                html.append("<span>").append(sentence).append("</span>");
             }
+            cursor = Math.max(cursor, attribution.end());
         }
+        appendGap(html, queryText, cursor, queryText.length());
         html.append("</main><aside><h2>Sources</h2>");
         if (orderedSources.isEmpty()) {
             html.append("<p class=\"none\">No matching sources found.</p>");
@@ -301,10 +333,12 @@ public class OriginalityReportGenerator {
                 .append(minimumWordOverlap > 0
                         ? String.format(Locale.ROOT, ", and must also share at least %.0f%% of their wording)", minimumWordOverlap * 100)
                         : ")")
-                .append("; the type comes from literal word overlap. Every sentence of the document is checked and counted, including its cover "
-                        + "sheet and reference list, which a cohort shares by design. On a set of documents about one subject some similarity is "
-                        + "expected, so read a match as evidence only where the wording, not merely the subject, is shared. Click a highlight to "
-                        + "jump to the matched passage in the source below; click the passage to jump back.</footer>");
+                .append("; the type comes from literal word overlap. Percentages are shares of the whole document's words. Every sentence is "
+                        + "checked and counted, including the cover sheet and reference list, which a cohort shares by design. On a set of documents "
+                        + "about one subject some similarity is expected, so read a match as evidence only where the wording, not merely the "
+                        + "subject, is shared. Click a highlight to jump to the matched passage in the source below; click the passage to jump "
+                        + "back. The text shown is the document's text as extracted, with its paragraphs and line breaks; formatting, images and "
+                        + "page furniture are not reproduced.</footer>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -326,17 +360,23 @@ public class OriginalityReportGenerator {
             Map<Integer, Integer> backLinks = passageBackLinks.getOrDefault(sourceId, Map.of());
             html.append("<details class=\"srcdoc\" id=\"src-").append(rank).append("\" open><summary><span class=\"swatch\">").append(rank)
                     .append("</span>").append(escape(sourceId)).append("</summary><div class=\"srctext\">");
-            List<EmbeddedSentence> sentences = sourceById.get(sourceId).sentences();
+            SourceDocument document = sourceById.get(sourceId);
+            List<EmbeddedSentence> sentences = document.sentences();
+            int cursor = 0;
             for (int j = 0; j < sentences.size(); j++) {
+                EmbeddedSentence sentence = sentences.get(j);
+                cursor = appendGap(html, document.text(), cursor, sentence.begin());
+                String rendered = escape(textOf(document.text(), sentence.begin(), sentence.end(), sentence.text()));
                 Integer backLink = backLinks.get(j);
                 if (backLink != null) {
                     html.append("<a class=\"hit\" id=\"").append(passageAnchor(rank, j)).append("\" href=\"#").append(queryAnchor(backLink))
-                            .append("\" title=\"Matched passage - click to jump back to the document\">").append(escape(sentences.get(j).text()))
-                            .append("</a> ");
+                            .append("\" title=\"Matched passage - click to jump back to the document\">").append(rendered).append("</a>");
                 } else {
-                    html.append("<span>").append(escape(sentences.get(j).text())).append("</span> ");
+                    html.append("<span>").append(rendered).append("</span>");
                 }
+                cursor = Math.max(cursor, sentence.end());
             }
+            appendGap(html, document.text(), cursor, document.text().length());
             html.append("</div></details>");
         }
         return html.append("</section>").toString();
@@ -348,7 +388,8 @@ public class OriginalityReportGenerator {
     }
 
     private static String tooltip(Attribution attribution, int rank) {
-        String excerpt = attribution.sourceSentence() == null ? "" : attribution.sourceSentence();
+        // The matched sentence keeps the source document's line breaks; a tooltip has to read as one line.
+        String excerpt = attribution.sourceSentence() == null ? "" : attribution.sourceSentence().replaceAll("\\s+", " ").strip();
         if (excerpt.length() > 140) {
             excerpt = excerpt.substring(0, 140) + "...";
         }
@@ -394,9 +435,18 @@ public class OriginalityReportGenerator {
         return words;
     }
 
+    /**
+     * Words in a text: whitespace-separated tokens that carry at least one letter or digit, so stray punctuation is not
+     * one.
+     */
     private static int wordCount(String text) {
-        String trimmed = text.trim();
-        return trimmed.isEmpty() ? 0 : trimmed.split("\\s+").length;
+        int words = 0;
+        for (String token : text.split("\\s+")) {
+            if (token.codePoints().anyMatch(Character::isLetterOrDigit)) {
+                words++;
+            }
+        }
+        return words;
     }
 
     private static double percent(int part, int total) {
@@ -418,8 +468,11 @@ public class OriginalityReportGenerator {
                 + ".legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 28px;background:#fafafa;border-bottom:1px solid #eee;"
                 + "font-size:13px}.grp{color:#999;font-weight:700;text-transform:uppercase;font-size:11px}"
                 + ".chip{display:flex;align-items:center;gap:6px;color:#555}.chip .box{width:14px;height:14px;border-radius:3px;display:inline-block}"
-                + ".layout{display:flex;gap:20px;max-width:1100px;margin:24px auto;padding:0 20px;align-items:flex-start}"
-                + "main{flex:1;background:#fff;padding:28px 32px;border-radius:8px;line-height:2;font-size:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
+                + ".layout{display:flex;gap:20px;max-width:1280px;margin:24px auto;padding:0 20px;align-items:flex-start}"
+                // pre-wrap is what makes the document read as the document: its paragraphs, indentation and line breaks are
+                // in the text, and without it the browser collapses every one of them into a single running block.
+                + "main{flex:1;background:#fff;padding:28px 32px;border-radius:8px;line-height:1.7;font-size:15px;white-space:pre-wrap;"
+                + "overflow-wrap:break-word;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
                 + ".match{border-radius:3px;padding:1px 2px;cursor:pointer;color:inherit;text-decoration:none}"
                 + ".match sup{font-size:10px;font-weight:700;color:#555;margin-left:1px}"
                 + ".match.attributed{opacity:.45;text-decoration:underline dotted}.match .att{color:#2e7d32}" + ".match .self-mark{color:#8e24aa}"
@@ -429,13 +482,13 @@ public class OriginalityReportGenerator {
                 + ".swatch{width:22px;height:22px;border-radius:4px;background:#eee;display:flex;align-items:center;justify-content:center;"
                 + "font-size:12px;font-weight:700;color:#444}.sid{flex:1;font-size:14px;word-break:break-word}.pct{font-weight:700}"
                 + ".sid a{color:inherit;text-decoration:none}.sid a:hover{text-decoration:underline}"
-                + ".passages{max-width:1100px;margin:0 auto 16px;padding:0 20px}"
+                + ".passages{max-width:1280px;margin:0 auto 16px;padding:0 20px}"
                 + ".passages h2{font-size:13px;text-transform:uppercase;color:#888;margin:0 0 12px}"
                 + ".srcdoc{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}"
                 + ".srcdoc summary{cursor:pointer;padding:12px 20px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}"
-                + ".srctext{padding:0 20px 20px;line-height:1.9;font-size:14px;color:#444}"
+                + ".srctext{padding:0 20px 20px;line-height:1.6;font-size:14px;color:#444;white-space:pre-wrap;overflow-wrap:break-word}"
                 + ".hit{background:#fff59d;border-radius:3px;padding:1px 2px;color:inherit;text-decoration:none}"
                 + ".match,.hit{scroll-margin:120px}.match:target,.hit:target{outline:3px solid #fb8c00;outline-offset:1px}"
-                + ".none{color:#888}footer{max-width:1100px;margin:8px auto 40px;padding:0 20px;color:#999;font-size:12px}";
+                + ".none{color:#888}footer{max-width:1280px;margin:8px auto 40px;padding:0 20px;color:#999;font-size:12px}";
     }
 }

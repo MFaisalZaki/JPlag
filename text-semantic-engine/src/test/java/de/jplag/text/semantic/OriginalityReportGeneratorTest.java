@@ -19,12 +19,21 @@ import org.junit.jupiter.api.Test;
  */
 class OriginalityReportGeneratorTest {
 
-    /** Splits on '|'; a sentence containing "alpha" gets vector [1,0], otherwise [0,1]. */
+    /**
+     * Splits on '|'; a sentence containing "alpha" gets vector [1,0], otherwise [0,1]. Each sentence carries its character
+     * range in the text, as the real splitter's do, so the report can render the document rather than the sentence list.
+     */
     private static final Function<String, List<EmbeddedSentence>> STUB = text -> {
         List<EmbeddedSentence> sentences = new ArrayList<>();
-        for (String sentence : text.split("\\|")) {
-            float[] vector = sentence.contains("alpha") ? new float[] {1, 0} : new float[] {0, 1};
-            sentences.add(new EmbeddedSentence(sentence.trim(), vector));
+        int cursor = 0;
+        for (String part : text.split("\\|", -1)) {
+            String sentence = part.strip();
+            if (!sentence.isEmpty()) {
+                int begin = cursor + part.length() - part.stripLeading().length();
+                float[] vector = sentence.contains("alpha") ? new float[] {1, 0} : new float[] {0, 1};
+                sentences.add(new EmbeddedSentence(sentence, vector, begin, begin + sentence.length()));
+            }
+            cursor += part.length() + 1; // past the part and the '|' that followed it
         }
         return sentences;
     };
@@ -51,7 +60,7 @@ class OriginalityReportGeneratorTest {
     @Test
     void testHighlightsMatchedSentenceAndScoresHalf() {
         // one matching sentence (alpha, 3 words) + one non-matching (3 words) -> 50% of words matched
-        String html = report(generator(0.9), "alpha sentence here|totally different clause", List.of(source("source-a", "alpha thing")));
+        String html = report(generator(0.9), "alpha sentence here | totally different clause", List.of(source("source-a", "alpha thing")));
 
         assertTrue(html.contains("class=\"match\""), "The matched sentence should be highlighted");
         assertTrue(html.contains("source-a"), "The source should appear in the overview");
@@ -200,6 +209,40 @@ class OriginalityReportGeneratorTest {
 
         assertEquals(2, html.split("class=\"match", -1).length - 1, "Both the body line and the reference entry should match");
         assertFalse(html.contains("class=\"skipped\""), "No sentence should be left out of the check");
+    }
+
+    @Test
+    void testDocumentIsRenderedAsSubmittedIncludingWhatIsNeverChecked() {
+        // The report is the reader's copy of the document, so everything between the checked sentences has to reach them:
+        // the cover sheet, the headings, the blank lines. Re-joining the sentences the splitter produced loses all of it,
+        // and a document that arrives as one running block reads as a defect in the tool.
+        Function<String, List<EmbeddedSentence>> skippingShortLines = text -> STUB.apply(text).stream()
+                .filter(sentence -> sentence.text().split("\\s+").length >= 3).toList();
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, 0, skippingShortLines, false);
+
+        String query = "Coversheet 240026012|Introduction|alpha copied line here|\n\nA closing note that is longer.";
+        String html = generator.generate("q", query, List.of(source("s", "alpha thing here")), Set.of());
+        String main = html.substring(html.indexOf("<main>") + 6, html.indexOf("</main>"));
+
+        assertTrue(main.contains("Coversheet 240026012"), "A cover sheet is too short to be checked but is part of the document");
+        assertTrue(main.contains("Introduction"), "A heading is never a sentence, and must still be rendered");
+        assertTrue(main.contains("\n\n"), "The blank line between two paragraphs has to survive into the report");
+        assertTrue(html.contains("white-space:pre-wrap"), "and the stylesheet has to render it rather than collapse it");
+        assertTrue(main.contains("class=\"match\""), "the matched sentence is still highlighted in place");
+    }
+
+    @Test
+    void testPercentagesAreSharesOfTheWholeDocument() {
+        // Four of the document's eight words are matched. The other four sit in lines too short to be checked at all -
+        // never candidates for a match, but words the reader can see, so they belong in the denominator.
+        Function<String, List<EmbeddedSentence>> skippingShortLines = text -> STUB.apply(text).stream()
+                .filter(sentence -> sentence.text().split("\\s+").length >= 3).toList();
+        OriginalityReportGenerator generator = new OriginalityReportGenerator(0.9, 0, skippingShortLines, false);
+
+        String query = "Coversheet 240026012 | Introduction | alpha copied line here | End";
+        String html = generator.generate("q", query, List.of(source("s", "alpha thing here")), Set.of());
+
+        assertTrue(html.contains("<span class=\"pct\">50%</span>"), "4 matched words out of the document's 8, not out of the 4 checked");
     }
 
     @Test
