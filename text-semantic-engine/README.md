@@ -60,7 +60,7 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--backend <TFIDF\|SBERT\|ENSEMBLE>` | `ENSEMBLE` | Retrieval signal: BM25, vector, or RRF of both. |
 | `--top-k <n>` | `0` (= all) | Archived documents to compare each query against. `0` compares against the whole index, so nothing is missed because retrieval ranked it low; set a limit only for a corpus too large to compare in full. |
 | `--html-report <dir>` | (none) | Write a Turnitin-style HTML originality report per query document. Requires SBERT. |
-| `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. |
+| `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. The report can be re-thresholded by its reader afterwards, within 0.10 below this and up to 1.0 — see [Reading a report down](#reading-a-report-down). |
 | `--minimum-word-overlap <0-1>` | `0` | Literal word overlap (Jaccard) a match must reach on top of the sentence threshold. Leave at `0` when the index holds the cohort's own submissions; raise it (`0.4` lightly edited, `0.8` near-verbatim) against published or reference material, whose standard sentences match everyone who states them correctly. |
 | `--show-attributed` | off | Also highlight quoted/cited matches (de-emphasized). |
 | `--author <name>` / `--author-pattern <regex>` | (none) | The query documents' author, as at index time. |
@@ -99,6 +99,17 @@ The index is **incremental**: run `index` again against the same `--index` direc
 - the **document itself, with matched sentences highlighted** inline and colour-coded by category; hovering shows the category, attribution status, source, and similarity, and clicking jumps to the matched passage in the source rendered below (and back).
 
 The document is rendered **as it was submitted**: its paragraphs, line breaks, cover sheet, headings and the short lines that are never long enough to check are all there, with the matched sentences highlighted where they sit. What is *not* reproduced is the page itself — fonts, images, tables as tables — because the engine works on the extracted text, so a report is a faithful plain-text rendering of the document rather than a facsimile of it. Percentages are shares of that whole document's words, including the parts that were never candidates for a match.
+
+### Reading a report down
+
+A report is not fixed at the settings it was generated with. Its controls re-decide every match in the page:
+
+- **click a type** in the legend — Copy-paste, Lightly edited, Paraphrase, self-reuse, quoted/cited — to take it out, and every percentage, the source list and the source passages follow;
+- **move the threshold** to keep only closer matches, or to look a little harder.
+
+This matters most where a category is true of a whole cohort and means nothing by it. On an assignment built around one set text — a History gobbet, a lab report with a fixed method — every good answer says much the same thing, so "paraphrase" can fire on every submission. A category that fires on everything is worse than no category at all, and the reader can now take it out and see what is left rather than discount it in their head or ask for the run to be repeated with different settings.
+
+The report carries matches down to 0.10 below the threshold it was generated with, which is how far the slider reaches: turning a report *down* needs matches that were written into the file, whereas turning it *up* needs nothing extra. The percentages saved in the file are the ones the run produced — the controls change what you see, not what was recorded — so the batch scripts' summaries are unaffected, and a report read with scripting off is exactly the report as generated.
 
 Two orthogonal signals drive it. The **category** combines high *semantic* similarity (why it matched) with *lexical* overlap (Jaccard of the sentences' words), separating copied wording from genuine rewording. The **attribution** status ([CitationDetector](src/main/java/de/jplag/text/semantic/CitationDetector.java)) checks each matched sentence for quotation marks or a citation — `(Author, 2020)`, `[3]`, a URL, or a DOI — so acknowledged reuse is separated from unacknowledged reuse.
 

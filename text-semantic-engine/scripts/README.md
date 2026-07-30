@@ -79,6 +79,14 @@ near `0.7` are crossed by chance alone on same-topic prose. Measured on a
 26-submission single-prompt cohort, `0.70` reports 173 matches and `0.85`
 reports 31.
 
+`SENTENCE_THRESHOLD` is not the last word on it, though: each report carries its
+matches down to 0.10 below the value it was generated with, and its controls let
+a reader move the threshold and switch whole match types off, with every
+percentage following. So an assignment where "paraphrase" fires on the entire
+cohort — one set text, one right answer — can be read without it, and without
+re-running anything. See
+[Reading a report down](../README.md#reading-a-report-down).
+
 Read a match as evidence only where the *wording*, not merely the subject, is
 shared: the report's category (copy-paste / lightly edited / paraphrase) comes
 from literal word overlap and is the signal to weigh. Note also that a cohort's

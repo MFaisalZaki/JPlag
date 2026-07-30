@@ -30,13 +30,20 @@ class OriginalityReportGeneratorTest {
             String sentence = part.strip();
             if (!sentence.isEmpty()) {
                 int begin = cursor + part.length() - part.stripLeading().length();
-                float[] vector = sentence.contains("alpha") ? new float[] {1, 0} : new float[] {0, 1};
-                sentences.add(new EmbeddedSentence(sentence, vector, begin, begin + sentence.length()));
+                sentences.add(new EmbeddedSentence(sentence, vector(sentence), begin, begin + sentence.length()));
             }
             cursor += part.length() + 1; // past the part and the '|' that followed it
         }
         return sentences;
     };
+
+    /** "alpha" and "near" sit 0.85 apart, so a sentence marked "near" is a match at some thresholds and not at others. */
+    private static float[] vector(String sentence) {
+        if (sentence.contains("alpha")) {
+            return new float[] {1, 0};
+        }
+        return sentence.contains("near") ? new float[] {0.85f, 0.5268f} : new float[] {0, 1};
+    }
 
     private static OriginalityReportGenerator generator(double threshold) {
         return new OriginalityReportGenerator(threshold, 0, STUB, false);
@@ -243,6 +250,43 @@ class OriginalityReportGeneratorTest {
         String html = generator.generate("q", query, List.of(source("s", "alpha thing here")), Set.of());
 
         assertTrue(html.contains("<span class=\"pct\">50%</span>"), "4 matched words out of the document's 8, not out of the 4 checked");
+    }
+
+    @Test
+    void testMatchesBelowTheThresholdAreCarriedSoTheReaderCanLowerIt() {
+        // 0.85 similar: not a match at 0.90, but a reader who turns the report down should see it. Re-thresholding works
+        // on what the file already holds and cannot go back for what was left out, so it has to be written in.
+        String html = report(generator(0.9), "near copied line here", List.of(source("s", "alpha thing here")));
+
+        assertTrue(html.contains("class=\"cand\""), "A sub-threshold candidate is written in, unhighlighted");
+        assertFalse(html.contains("class=\"match\""), "but it is not a match at the threshold the report was generated with");
+        assertTrue(html.contains("data-score=\"0.850\""), "and it carries its similarity, so the control can re-decide it");
+        assertTrue(html.contains("id=\"thr\""), "which is what the threshold control is for");
+    }
+
+    @Test
+    void testHighlightsCarryWhatTheControlsNeedToReDecideThem() {
+        String html = report(generator(0.9), "alpha copied line here", List.of(source("s", "alpha copied line here")));
+
+        assertTrue(html.contains("data-cat=\"COPY_PASTE\""), "the match's type");
+        assertTrue(html.contains("data-words=\"4\""), "how many of the document's words it accounts for");
+        assertTrue(html.contains("data-att=\"0\""), "whether it is acknowledged");
+        assertTrue(html.contains("data-src=\"1\""), "and which source it came from");
+    }
+
+    @Test
+    void testEveryMatchTypeCanBeTurnedOff() {
+        // On an assignment where a whole cohort answers one prompt in much the same way, "paraphrase" can be true of every
+        // submission and mean nothing by it. A reader has to be able to take the category out and see what is left,
+        // instead of discounting it in their head or asking for the run to be repeated.
+        String html = report(generator(0.9), "alpha copied line", List.of(source("s", "alpha copied line")));
+
+        for (MatchCategory category : MatchCategory.values()) {
+            assertTrue(html.contains("data-key=\"cat:" + category.name() + "\""),
+                    category.label() + " should be a control the reader can switch off");
+        }
+        assertTrue(html.contains("data-key=\"attributed\""), "as should quoted and cited matches");
+        assertTrue(html.contains("data-key=\"unattributed\""), "and the score they add up to should be reported back");
     }
 
     @Test
