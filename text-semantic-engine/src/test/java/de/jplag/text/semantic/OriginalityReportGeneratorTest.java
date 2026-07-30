@@ -253,15 +253,15 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
-    void testMatchesBelowTheThresholdAreCarriedSoTheReaderCanLowerIt() {
-        // 0.85 similar: not a match at 0.90, but a reader who turns the report down should see it. Re-thresholding works
-        // on what the file already holds and cannot go back for what was left out, so it has to be written in.
+    void testNothingBelowTheThresholdReachesTheReport() {
+        // 0.85 similar, so not a match at 0.90. The report is written at one threshold and offers no way to move it, so
+        // carrying near misses would only inflate the file with matches nothing can ever show.
         String html = report(generator(0.9), "near copied line here", List.of(source("s", "alpha thing here")));
 
-        assertTrue(html.contains("class=\"cand\""), "A sub-threshold candidate is written in, unhighlighted");
-        assertFalse(html.contains("class=\"match\""), "but it is not a match at the threshold the report was generated with");
-        assertTrue(html.contains("data-score=\"0.850\""), "and it carries its similarity, so the control can re-decide it");
-        assertTrue(html.contains("id=\"thr\""), "which is what the threshold control is for");
+        assertFalse(html.contains("class=\"cand\""), "A sub-threshold sentence is not written in as a match at all");
+        assertFalse(html.contains("class=\"match\""), "nor highlighted as one");
+        assertTrue(html.contains("No matching sources found"), "and no source is credited for it");
+        assertTrue(html.contains("near copied line here"), "though the sentence is still part of the document and is rendered");
     }
 
     @Test
@@ -272,6 +272,7 @@ class OriginalityReportGeneratorTest {
         assertTrue(html.contains("data-words=\"4\""), "how many of the document's words it accounts for");
         assertTrue(html.contains("data-att=\"0\""), "whether it is acknowledged");
         assertTrue(html.contains("data-src=\"1\""), "and which source it came from");
+        assertFalse(html.contains("<input type=\"range\""), "and no slider, which the reader asked not to have in the page");
     }
 
     @Test
@@ -292,22 +293,20 @@ class OriginalityReportGeneratorTest {
     @Test
     void testAPassageIsCountedAgainstEverySourceThatCarriesIt() {
         // Two students sharing a passage is worth reading; a passage the whole cohort has is what the assignment asked
-        // for. On a set-text assignment that is most of the report, so the count is recorded and the reader can hide on it.
+        // for. The report is credited to one source either way, so the count is what tells the two apart.
         List<ArchivedDocument> cohort = List.of(source("first", "alpha copied line"), source("second", "alpha copied line"),
                 source("third", "alpha copied line"));
         String html = report(generator(0.9), "alpha copied line", cohort);
 
-        assertTrue(html.contains("data-shared=\"3\""), "The passage is carried by all three sources, not just the one it is credited to");
-        assertTrue(html.contains("found in 3 sources"), "and the tooltip should say so");
-        assertTrue(html.contains("id=\"shared\""), "There should be a control to narrow by how widely a passage is shared");
+        assertTrue(html.contains("found in 3 sources"), "The passage is carried by all three sources, not just the one it is credited to");
+        assertEquals(1, html.split("class=\"pct\"", -1).length - 1, "though it is still credited to one of them only");
     }
 
     @Test
     void testAPassageOnlyOneSourceCarriesIsNotMarkedAsShared() {
         String html = report(generator(0.9), "alpha copied line", List.of(source("first", "alpha copied line"), source("second", "beta other line")));
 
-        assertTrue(html.contains("data-shared=\"1\""), "Only one source carries it");
-        assertFalse(html.contains("found in"), "so the tooltip should not call it shared");
+        assertFalse(html.contains("found in"), "One source carries it, so the tooltip should not call it shared");
     }
 
     @Test

@@ -79,12 +79,10 @@ near `0.7` are crossed by chance alone on same-topic prose. Measured on a
 26-submission single-prompt cohort, `0.70` reports 173 matches and `0.85`
 reports 31.
 
-`SENTENCE_THRESHOLD` is not the last word on it, though: each report carries its
-matches down to 0.10 below the value it was generated with, and its controls let
-a reader move the threshold and switch whole match types off, with every
-percentage following. So an assignment where "paraphrase" fires on the entire
-cohort — one set text, one right answer — can be read without it, and without
-re-running anything. See
+`SENTENCE_THRESHOLD` is fixed for a given run, but a report's controls let a
+reader switch whole match types off, with every percentage following. So an
+assignment where "paraphrase" fires on the entire cohort — one set text, one
+right answer — can be read without it, without re-running anything. See
 [Reading a report down](../README.md#reading-a-report-down).
 
 Read a match as evidence only where the *wording*, not merely the subject, is
@@ -128,8 +126,8 @@ of context either side, `NONE` nothing at all. Full text is right for a cohort's
 own submissions and is what makes a match checkable at a glance; against
 published or licensed material it reproduces far more of the source than the
 finding needs, which is a licence question as much as a size one. It is the size
-control as well — a 45-submission coursework produced 7.2 MB of reports at `FULL`
-and 2.3 MB at `EXCERPT`.
+control as well, which matters once the sources are chapter-length rather than
+essay-length.
 
 Two caveats worth knowing before reading the output. The corpus is built from
 abstracts, so it tests whether a submission reproduces a paper's *abstract*, not

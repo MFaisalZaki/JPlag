@@ -60,7 +60,7 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--backend <TFIDF\|SBERT\|ENSEMBLE>` | `ENSEMBLE` | Retrieval signal: BM25, vector, or RRF of both. |
 | `--top-k <n>` | `0` (= all) | Archived documents to compare each query against. `0` compares against the whole index, so nothing is missed because retrieval ranked it low; set a limit only for a corpus too large to compare in full. |
 | `--html-report <dir>` | (none) | Write a Turnitin-style HTML originality report per query document. Requires SBERT. |
-| `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. The report can be re-thresholded by its reader afterwards, within 0.10 below this and up to 1.0 — see [Reading a report down](#reading-a-report-down). |
+| `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. Fixed for a report: change it and re-run. |
 | `--minimum-word-overlap <0-1>` | `0` | Literal word overlap (Jaccard) a match must reach on top of the sentence threshold. Leave at `0` when the index holds the cohort's own submissions; raise it (`0.4` lightly edited, `0.8` near-verbatim) against published or reference material, whose standard sentences match everyone who states them correctly. |
 | `--show-attributed` | off | Also highlight quoted/cited matches (de-emphasized). |
 | `--source-text <FULL\|EXCERPT\|NONE>` | `FULL` | How much of a matched source the report reproduces — see [Reproducing the sources](#reproducing-the-sources). |
@@ -103,17 +103,13 @@ The document is rendered **as it was submitted**: its paragraphs, line breaks, c
 
 ### Reading a report down
 
-A report is not fixed at the settings it was generated with. Its controls re-decide every match in the page:
+A report is not fixed at the match types it was generated with. **Click a type** in the legend — Copy-paste, Lightly edited, Paraphrase, self-reuse, quoted/cited — to take it out, and every percentage, the source list and the source passages follow.
 
-- **click a type** in the legend — Copy-paste, Lightly edited, Paraphrase, self-reuse, quoted/cited — to take it out, and every percentage, the source list and the source passages follow;
-- **move the threshold** to keep only closer matches, or to look a little harder;
-- **narrow by how widely a passage is shared** — keep only what at most *n* of the sources carry.
+This matters where a category is true of a whole cohort and means nothing by it. On an assignment built around one set text — a History gobbet, a lab report with a fixed method — every good answer says much the same thing, so "paraphrase" can fire on every submission. A category that fires on everything is worse than no category at all, and the reader can take it out and see what is left rather than discount it in their head or ask for the run to be repeated.
 
-This matters most where a category is true of a whole cohort and means nothing by it. On an assignment built around one set text — a History gobbet, a lab report with a fixed method — every good answer says much the same thing, so "paraphrase" can fire on every submission. A category that fires on everything is worse than no category at all, and the reader can now take it out and see what is left rather than discount it in their head or ask for the run to be repeated with different settings.
+Hovering a match also says **how many of the sources carry that passage**, which separates the two cases the percentage cannot: a passage one other student has is worth reading, a passage the whole cohort has is what the assignment asked for. On a nine-submission Art History cohort the passages four of the nine carried turned out to be the essay's own framing sentence ("In this essay, I will analyze Anguissola's *Self Portrait* from 1556") and the citation of the set reading — the assignment, not misconduct.
 
-The sharing count is the sharper tool for that, because it separates the two cases directly: a passage one other student has is worth reading, a passage the whole cohort has is what the assignment asked for. On a nine-submission Art History cohort the passages four of the nine carried turned out to be the essay's own framing sentence ("In this essay, I will analyze Anguissola's *Self Portrait* from 1556") and the citation of the set reading — the assignment, not misconduct — and narrowing to "at most two sources" took the report from 5% to 2%. Each match's count is in its tooltip either way; the control only decides what you look at, and the report opens with all of it.
-
-The report carries matches down to 0.10 below the threshold it was generated with, which is how far the slider reaches: turning a report *down* needs matches that were written into the file, whereas turning it *up* needs nothing extra. The percentages saved in the file are the ones the run produced — the controls change what you see, not what was recorded — so the batch scripts' summaries are unaffected, and a report read with scripting off is exactly the report as generated.
+The threshold itself is not adjustable from inside the report: it is `--sentence-threshold` at run time, and a report contains only what matched at the value it was run with. The percentages saved in the file are the ones the run produced — the type toggles change what you see, not what was recorded — so the batch scripts' summaries are unaffected, and a report read with scripting off is exactly the report as generated.
 
 Two orthogonal signals drive it. The **category** combines high *semantic* similarity (why it matched) with *lexical* overlap (Jaccard of the sentences' words), separating copied wording from genuine rewording. The **attribution** status ([CitationDetector](src/main/java/de/jplag/text/semantic/CitationDetector.java)) checks each matched sentence for quotation marks or a citation — `(Author, 2020)`, `[3]`, a URL, or a DOI — so acknowledged reuse is separated from unacknowledged reuse.
 
@@ -135,7 +131,7 @@ Against published material there is. A report that reprints several chapters of 
 
 `EXCERPT` keeps a sentence either side because a matched sentence on its own reads as an accusation without a defence: whether it is the subject's standard phrasing or genuinely lifted usually turns on what surrounds it.
 
-It is also the practical control on report size, which matters once the sources are chapter-length rather than essay-length. On a 45-submission Art History coursework the reports came to 7.2 MB at `FULL` and 2.3 MB at `EXCERPT`.
+It is also the practical control on report size, which matters once the sources are chapter-length rather than essay-length. On a 45-submission Art History coursework the reports came to 4.1 MB at `FULL` and 1.5 MB at `EXCERPT`.
 
 ### Self-plagiarism
 
