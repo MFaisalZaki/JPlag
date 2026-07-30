@@ -86,9 +86,13 @@ public class OriginalityReportGenerator {
      * A query sentence and the best source sentence found for it, kept whenever that best match is close enough to be worth
      * showing at <em>some</em> threshold the reader might choose — see {@link #candidateFloor()}. Whether it counts as a
      * match is then a question of where the threshold sits, which the report lets the reader move.
+     * <p>
+     * {@code sharedWith} counts how many of the sources carry this passage at all, which separates a passage one other
+     * student has from a passage the whole cohort has. The second is what the assignment asked for; the first is the one
+     * worth reading.
      */
     private record Attribution(String text, int begin, int end, String sourceId, String sourceSentence, int sourceSentenceIndex, double score,
-            MatchCategory category, AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean candidate) {
+            MatchCategory category, AttributionStatus attribution, String attributionEvidence, boolean selfReuse, boolean candidate, int sharedWith) {
 
         /** Whether this is a match at the given threshold. */
         boolean matched(double threshold) {
@@ -178,10 +182,17 @@ public class OriginalityReportGenerator {
             Set<String> bestAuthors = Set.of();
             String bestSentence = null;
             int bestIndex = -1;
+            int sharedWith = 0;
             for (SourceDocument source : sources) {
+                double bestHere = -1.0;
+                String bestSentenceHere = null;
                 for (int candidateIndex = 0; candidateIndex < source.sentences().size(); candidateIndex++) {
                     EmbeddedSentence candidate = source.sentences().get(candidateIndex);
                     double similarity = cosine(querySentence.vector(), candidate.vector());
+                    if (similarity > bestHere) {
+                        bestHere = similarity;
+                        bestSentenceHere = candidate.text();
+                    }
                     if (similarity > bestScore) {
                         bestScore = similarity;
                         bestSource = source.id();
@@ -189,6 +200,12 @@ public class OriginalityReportGenerator {
                         bestSentence = candidate.text();
                         bestIndex = candidateIndex;
                     }
+                }
+                // Counted at the floor rather than at the threshold, so the count means the same thing wherever the reader
+                // puts the slider, and so that a passage the cohort states in slightly different words each time still
+                // counts as the cohort's. It answers "how distinctive is this passage", not "how many matched it".
+                if (bestHere >= candidateFloor() && wordOverlap(querySentence.text(), bestSentenceHere) >= minimumWordOverlap) {
+                    sharedWith++;
                 }
             }
             double overlap = bestSentence == null ? 0.0 : wordOverlap(querySentence.text(), bestSentence);
@@ -199,7 +216,7 @@ public class OriginalityReportGenerator {
             boolean selfReuse = candidate && !Collections.disjoint(queryAuthors, bestAuthors);
             attributions.add(new Attribution(querySentence.text(), querySentence.begin(), querySentence.end(), candidate ? bestSource : null,
                     bestSentence, bestIndex, bestScore, category, check == null ? null : check.status(), check == null ? null : check.evidence(),
-                    selfReuse, candidate));
+                    selfReuse, candidate, sharedWith));
         }
         return attributions;
     }
@@ -298,7 +315,8 @@ public class OriginalityReportGenerator {
         html.append("<header><div class=\"title\">Originality Report</div><div class=\"subtitle\">").append(escape(queryId))
                 .append("</div></header>");
 
-        html.append(renderControls(totals, authorKnown));
+        int mostSharedWith = attributions.stream().filter(Attribution::candidate).mapToInt(Attribution::sharedWith).max().orElse(0);
+        html.append(renderControls(totals, authorKnown, mostSharedWith));
 
         // For every candidate source sentence, remember the first query sentence that reached it, so the passage can link
         // back. Candidates rather than matches: a passage the reader can turn on has to be anchored before they do.
@@ -385,6 +403,8 @@ public class OriginalityReportGenerator {
                   var chips = [].slice.call(document.querySelectorAll('.chip'));
                   var slider = document.getElementById('thr');
                   var output = document.getElementById('thrOut');
+                  var shared = document.getElementById('shared');
+                  var sharedOutput = document.getElementById('sharedOut');
                   var none = document.querySelector('.none');
                   var aside = document.querySelector('aside');
                   var defaults = {threshold: +slider.value, off: {}};
@@ -399,10 +419,14 @@ public class OriginalityReportGenerator {
                     return chips.filter(function (chip) { return chip.dataset.key === key; })[0];
                   }
 
-                  // Threshold and type decide whether a candidate is in scope at all; the quoted filter then decides
-                  // whether an acknowledged one is counted, which is a separate question from whether it is a match.
+                  // Threshold, type and how widely the passage is shared decide whether a candidate is in scope at all;
+                  // the quoted filter then decides whether an acknowledged one is counted, which is a separate question
+                  // from whether it is a match.
                   function inScope(el) {
                     if (+el.dataset.score < +slider.value) {
+                      return false;
+                    }
+                    if (shared && +el.dataset.shared > +shared.value) {
                       return false;
                     }
                     return el.dataset.self === '1' ? !off.self : !off['cat:' + el.dataset.cat];
@@ -503,9 +527,20 @@ public class OriginalityReportGenerator {
                     output.textContent = (+slider.value).toFixed(2);
                     apply();
                   });
+                  if (shared) {
+                    shared.addEventListener('input', function () {
+                      sharedOutput.textContent = shared.value === shared.max ? 'all sources'
+                        : shared.value === '1' ? '1 source' : shared.value + ' sources';
+                      apply();
+                    });
+                  }
                   document.getElementById('reset').addEventListener('click', function () {
                     slider.value = defaults.threshold;
                     output.textContent = defaults.threshold.toFixed(2);
+                    if (shared) {
+                      shared.value = shared.max;
+                      sharedOutput.textContent = 'all sources';
+                    }
                     off = Object.assign({}, defaults.off);
                     chips.forEach(function (chip) {
                       if (chip.classList.contains('toggle')) {
@@ -572,7 +607,7 @@ public class OriginalityReportGenerator {
      * take such a category out of the report and see what is left, rather than having to discount it in their head or ask
      * for the run to be repeated with different settings.
      */
-    private String renderControls(Totals totals, boolean authorKnown) {
+    private String renderControls(Totals totals, boolean authorKnown, int mostSharedWith) {
         StringBuilder html = new StringBuilder("<div class=\"legend\"><span class=\"grp\">Type:</span>");
         for (MatchCategory category : MatchCategory.values()) {
             html.append(toggle("cat:" + category.name(), category.colour(), category.label(),
@@ -593,8 +628,19 @@ public class OriginalityReportGenerator {
         html.append("<input type=\"range\" id=\"thr\" min=\"").append(String.format(Locale.ROOT, "%.2f", candidateFloor()))
                 .append("\" max=\"1\" step=\"0.01\" value=\"").append(String.format(Locale.ROOT, "%.2f", matchThreshold)).append("\">");
         html.append("<output id=\"thrOut\">").append(String.format(Locale.ROOT, "%.2f", matchThreshold)).append("</output>");
+        if (mostSharedWith > 1) {
+            // A passage the whole cohort shares is the assignment, not misconduct. The count is a fact about the passage,
+            // shown either way; narrowing on it is the reader's choice, made in the open in the controls rather than
+            // applied silently to the run. Only offered where something is actually shared. The control reads upwards from
+            // "only what one source has" to "everything", so its top end is the report as generated and there is no
+            // setting that empties it.
+            html.append("<label for=\"shared\">Keep passages found in at most</label>");
+            html.append("<input type=\"range\" id=\"shared\" min=\"1\" max=\"").append(mostSharedWith).append("\" step=\"1\" value=\"")
+                    .append(mostSharedWith).append("\">");
+            html.append("<output id=\"sharedOut\">all sources</output>");
+        }
         html.append("<button type=\"button\" id=\"reset\">Reset</button>");
-        html.append("<span class=\"hint\">Raise it to keep only closer matches. Click a type above to take it out of the report. "
+        html.append("<span class=\"hint\">Raise the threshold to keep only closer matches. Click a type above to take it out of the report. "
                 + "Percentages update as you go; this report holds matches down to ").append(String.format(Locale.ROOT, "%.2f", candidateFloor()))
                 .append(".</span></div>");
         return html.toString();
@@ -641,6 +687,7 @@ public class OriginalityReportGenerator {
         html.append(" data-src=\"").append(rank).append('"');
         html.append(" data-att=\"").append(attributed ? 1 : 0).append('"');
         html.append(" data-self=\"").append(attribution.selfReuse() ? 1 : 0).append('"');
+        html.append(" data-shared=\"").append(attribution.sharedWith()).append('"');
         html.append(" data-colour=\"").append(colour).append("\">").append(sentence);
         return html.append("<sup class=\"marks\">").append(reported ? marks(attributed, attribution.selfReuse(), rank) : "").append("</sup></a>")
                 .toString();
@@ -657,8 +704,9 @@ public class OriginalityReportGenerator {
             status += " (" + attribution.attributionEvidence() + ")";
         }
         String self = attribution.selfReuse() ? "SELF-REUSE - " : "";
-        return String.format(Locale.ROOT, "%s%s - %s - source %d %s (%.0f%% similar): %s -- Click to open the matched passage in the source.", self,
-                attribution.category().label(), status, rank, attribution.sourceId(), attribution.score() * 100, excerpt);
+        String shared = attribution.sharedWith() > 1 ? String.format(Locale.ROOT, " - found in %d sources", attribution.sharedWith()) : "";
+        return String.format(Locale.ROOT, "%s%s - %s - source %d %s (%.0f%% similar)%s: %s -- Click to open the matched passage in the source.", self,
+                attribution.category().label(), status, rank, attribution.sourceId(), attribution.score() * 100, shared, excerpt);
     }
 
     /** Cosine similarity of two unit-length embeddings, i.e. their dot product. */

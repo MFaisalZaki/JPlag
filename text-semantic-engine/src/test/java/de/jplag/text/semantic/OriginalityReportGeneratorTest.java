@@ -290,6 +290,27 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testAPassageIsCountedAgainstEverySourceThatCarriesIt() {
+        // Two students sharing a passage is worth reading; a passage the whole cohort has is what the assignment asked
+        // for. On a set-text assignment that is most of the report, so the count is recorded and the reader can hide on it.
+        List<ArchivedDocument> cohort = List.of(source("first", "alpha copied line"), source("second", "alpha copied line"),
+                source("third", "alpha copied line"));
+        String html = report(generator(0.9), "alpha copied line", cohort);
+
+        assertTrue(html.contains("data-shared=\"3\""), "The passage is carried by all three sources, not just the one it is credited to");
+        assertTrue(html.contains("found in 3 sources"), "and the tooltip should say so");
+        assertTrue(html.contains("id=\"shared\""), "There should be a control to narrow by how widely a passage is shared");
+    }
+
+    @Test
+    void testAPassageOnlyOneSourceCarriesIsNotMarkedAsShared() {
+        String html = report(generator(0.9), "alpha copied line", List.of(source("first", "alpha copied line"), source("second", "beta other line")));
+
+        assertTrue(html.contains("data-shared=\"1\""), "Only one source carries it");
+        assertFalse(html.contains("found in"), "so the tooltip should not call it shared");
+    }
+
+    @Test
     void testHighlightLinksToTheMatchedSourcePassageAndBack() {
         // The source's second sentence (index 1) is the matching one; its first stays unmatched context.
         String html = report(generator(0.9), "alpha sentence here", List.of(source("source-a", "unrelated beta text|alpha thing")));

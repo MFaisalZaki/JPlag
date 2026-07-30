@@ -105,9 +105,12 @@ The document is rendered **as it was submitted**: its paragraphs, line breaks, c
 A report is not fixed at the settings it was generated with. Its controls re-decide every match in the page:
 
 - **click a type** in the legend — Copy-paste, Lightly edited, Paraphrase, self-reuse, quoted/cited — to take it out, and every percentage, the source list and the source passages follow;
-- **move the threshold** to keep only closer matches, or to look a little harder.
+- **move the threshold** to keep only closer matches, or to look a little harder;
+- **narrow by how widely a passage is shared** — keep only what at most *n* of the sources carry.
 
 This matters most where a category is true of a whole cohort and means nothing by it. On an assignment built around one set text — a History gobbet, a lab report with a fixed method — every good answer says much the same thing, so "paraphrase" can fire on every submission. A category that fires on everything is worse than no category at all, and the reader can now take it out and see what is left rather than discount it in their head or ask for the run to be repeated with different settings.
+
+The sharing count is the sharper tool for that, because it separates the two cases directly: a passage one other student has is worth reading, a passage the whole cohort has is what the assignment asked for. On a nine-submission Art History cohort the passages four of the nine carried turned out to be the essay's own framing sentence ("In this essay, I will analyze Anguissola's *Self Portrait* from 1556") and the citation of the set reading — the assignment, not misconduct — and narrowing to "at most two sources" took the report from 5% to 2%. Each match's count is in its tooltip either way; the control only decides what you look at, and the report opens with all of it.
 
 The report carries matches down to 0.10 below the threshold it was generated with, which is how far the slider reaches: turning a report *down* needs matches that were written into the file, whereas turning it *up* needs nothing extra. The percentages saved in the file are the ones the run produced — the controls change what you see, not what was recorded — so the batch scripts' summaries are unaffected, and a report read with scripting off is exactly the report as generated.
 
