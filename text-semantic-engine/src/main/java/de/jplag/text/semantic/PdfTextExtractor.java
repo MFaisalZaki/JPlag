@@ -79,10 +79,11 @@ public final class PdfTextExtractor {
     private static Callable<String> extract(File pdfFile) {
         return () -> {
             try (PDDocument document = Loader.loadPDF(pdfFile)) {
+                // Text is read in the order the content stream writes it, which is the document's own reading order and
+                // keeps each column of a multi-column layout together. Sorting by position instead splices side-by-side
+                // columns into each other line by line — on a two-column poster a sentence from the left column runs
+                // straight into a heading from the right — so it is left off deliberately.
                 PDFTextStripper stripper = new PDFTextStripper();
-                // Read in the order the text sits on the page rather than the order the content stream writes it, which is
-                // what a multi-column layout — a poster, a two-column article — needs to come out as running prose.
-                stripper.setSortByPosition(true);
                 stripper.setEndPage(MAXIMUM_PAGES);
                 if (document.getNumberOfPages() > MAXIMUM_PAGES) {
                     logger.warn("'{}' has {} pages; only the first {} are checked.", pdfFile, document.getNumberOfPages(), MAXIMUM_PAGES);
