@@ -311,6 +311,34 @@ class OriginalityReportGeneratorTest {
     }
 
     @Test
+    void testExcerptModeReproducesOnlyTheMatchedPassageAndItsContext() {
+        // Against a set text, printing the whole source to justify a handful of matched sentences reproduces far more of
+        // it than the finding needs — a licence question as much as a size one.
+        List<ArchivedDocument> sources = List.of(source("s", "opening line far away|context before it|alpha copied line|context after it|closing"));
+        OriginalityReportGenerator excerpting = new OriginalityReportGenerator(0.9, 0, STUB, false, SourceTextMode.EXCERPT);
+
+        String html = excerpting.generate("q", "alpha copied line", sources, Set.of());
+
+        assertTrue(html.contains("context before it"), "The sentence before the match is kept, so the match can be read in context");
+        assertTrue(html.contains("context after it"), "as is the one after it");
+        assertFalse(html.contains("opening line far away"), "but the rest of the source is not reproduced");
+        assertTrue(html.contains("elision"), "and the omission is marked rather than left to look like the whole source");
+    }
+
+    @Test
+    void testNoneModeNamesTheSourcesWithoutReproducingThem() {
+        List<ArchivedDocument> sources = List.of(source("s", "alpha copied line"));
+        OriginalityReportGenerator naming = new OriginalityReportGenerator(0.9, 0, STUB, false, SourceTextMode.NONE);
+
+        String html = naming.generate("q", "alpha copied line", sources, Set.of());
+
+        assertTrue(html.contains("class=\"match"), "The match is still reported");
+        assertTrue(html.contains("<span class=\"pct\">100%</span>"), "and so is what its source accounts for");
+        assertFalse(html.contains("Matched source passages"), "but no source text is reproduced");
+        assertFalse(html.contains("href=\"#m-1-0\""), "and a highlight does not offer to jump to a passage that is not there");
+    }
+
+    @Test
     void testHighlightLinksToTheMatchedSourcePassageAndBack() {
         // The source's second sentence (index 1) is the matching one; its first stays unmatched context.
         String html = report(generator(0.9), "alpha sentence here", List.of(source("source-a", "unrelated beta text|alpha thing")));

@@ -155,6 +155,15 @@ public class CorpusCli implements Runnable {
                 + "they are hidden and excluded from the score, since acknowledged reuse is not plagiarism.")
         private boolean showAttributed;
 
+        @Option(names = "--source-text", defaultValue = "FULL", description = "How much of a matched source the report "
+                + "reproduces: ${COMPLETION-CANDIDATES}. FULL (the default) prints the whole source with its matched "
+                + "passages highlighted, which is what makes a match checkable at a glance and is unproblematic when the "
+                + "sources are the cohort's own submissions. EXCERPT prints only the matched passages and a sentence of "
+                + "context either side; NONE names the sources without reproducing them. Use those against published or "
+                + "licensed material, where quoting chapters of a set text to justify a few matched sentences reproduces "
+                + "far more of it than the finding needs. Default: ${DEFAULT-VALUE}.")
+        private SourceTextMode sourceText;
+
         @Option(names = "--author", defaultValue = "", description = "Author of the query document(s); matches to the same "
                 + "author's indexed work are flagged as self-plagiarism.")
         private String queryAuthor;
@@ -191,7 +200,8 @@ public class CorpusCli implements Runnable {
             try (DocumentEmbedder embedder = sbert != null ? sbert : noEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
                 OriginalityReportGenerator reportGenerator = sbert == null ? null
-                        : new OriginalityReportGenerator(sentenceThreshold, minimumWordOverlap, sbert::embedSentencesWithText, !showAttributed);
+                        : new OriginalityReportGenerator(sentenceThreshold, minimumWordOverlap, sbert::embedSentencesWithText, !showAttributed,
+                                sourceText);
                 // Comparing against the whole index is "top-k where k is the corpus size", so retrieval still ranks the
                 // results; it just no longer decides which documents get compared at all.
                 int comparedDocuments = topK > 0 ? topK : index.size();

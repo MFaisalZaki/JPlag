@@ -12,6 +12,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Generates a self-contained, Turnitin-style HTML "originality report" for a query document.
@@ -52,10 +54,14 @@ public class OriginalityReportGenerator {
      */
     private static final double CANDIDATE_WINDOW = 0.10;
 
+    /** Sentences of context kept either side of a matched passage in {@link SourceTextMode#EXCERPT}. */
+    private static final int EXCERPT_CONTEXT_SENTENCES = 1;
+
     private final double matchThreshold;
     private final double minimumWordOverlap;
     private final Function<String, List<EmbeddedSentence>> sentenceEmbedder;
     private final boolean excludeAttributed;
+    private final SourceTextMode sourceTextMode;
     /** Sentence embeddings per source document id, so a document shared by many queries is embedded once. */
     private final Map<String, List<EmbeddedSentence>> sentenceCache = new HashMap<>();
 
@@ -73,10 +79,24 @@ public class OriginalityReportGenerator {
      */
     public OriginalityReportGenerator(double matchThreshold, double minimumWordOverlap, Function<String, List<EmbeddedSentence>> sentenceEmbedder,
             boolean excludeAttributed) {
+        this(matchThreshold, minimumWordOverlap, sentenceEmbedder, excludeAttributed, SourceTextMode.FULL);
+    }
+
+    /**
+     * Creates the generator, choosing how much of each matched source it reproduces.
+     * @param matchThreshold the minimum sentence cosine similarity to count as a match (e.g. 0.85).
+     * @param minimumWordOverlap the minimum literal word overlap (Jaccard) a match must also reach, in {@code [0, 1]}.
+     * @param sentenceEmbedder splits a text into sentences and embeds them.
+     * @param excludeAttributed if true, quoted/cited matches are not highlighted or counted.
+     * @param sourceTextMode how much of a matched source to render below the report; see {@link SourceTextMode}.
+     */
+    public OriginalityReportGenerator(double matchThreshold, double minimumWordOverlap, Function<String, List<EmbeddedSentence>> sentenceEmbedder,
+            boolean excludeAttributed, SourceTextMode sourceTextMode) {
         this.matchThreshold = matchThreshold;
         this.minimumWordOverlap = minimumWordOverlap;
         this.sentenceEmbedder = sentenceEmbedder;
         this.excludeAttributed = excludeAttributed;
+        this.sourceTextMode = sourceTextMode;
     }
 
     private record SourceDocument(String id, Set<String> authors, String text, List<EmbeddedSentence> sentences) {
@@ -350,9 +370,10 @@ public class OriginalityReportGenerator {
         for (String source : orderedSources) {
             int words = totals.wordsPerSource().getOrDefault(source, 0);
             html.append("<div class=\"source\" data-rank=\"").append(rankOf.get(source)).append("\"").append(words == 0 ? " hidden" : "")
-                    .append("><span class=\"swatch\">").append(rankOf.get(source)).append("</span><span class=\"sid\">").append("<a href=\"#src-")
-                    .append(rankOf.get(source)).append("\">").append(escape(source)).append("</a></span><span class=\"pct\">")
-                    .append(format(percent(words, totals.totalWords()))).append("</span></div>");
+                    .append("><span class=\"swatch\">").append(rankOf.get(source)).append("</span><span class=\"sid\">")
+                    .append(sourceTextMode == SourceTextMode.NONE ? escape(source)
+                            : "<a href=\"#src-" + rankOf.get(source) + "\">" + escape(source) + "</a>")
+                    .append("</span><span class=\"pct\">").append(format(percent(words, totals.totalWords()))).append("</span></div>");
         }
         html.append("</aside></div>");
         Set<String> highlightedPassages = new HashSet<>();
@@ -469,7 +490,9 @@ public class OriginalityReportGenerator {
                       if (!on) {
                         return;
                       }
-                      targets[el.getAttribute('href').slice(1)] = el.id;
+                      if (el.getAttribute('href')) {
+                        targets[el.getAttribute('href').slice(1)] = el.id;
+                      }
                       perSource[el.dataset.src] = (perSource[el.dataset.src] || 0) + words;
                       if (el.dataset.att === '0') {
                         unattributed += words;
@@ -558,9 +581,9 @@ public class OriginalityReportGenerator {
      * Renders each matching source document's full text below the report, with the matched sentences highlighted and
      * anchored, so a click on an inline highlight lands directly on the passage it was matched to (and back).
      */
-    private static String renderSourcePassages(List<SourceDocument> sources, List<String> orderedSources, Map<String, Integer> rankOf,
+    private String renderSourcePassages(List<SourceDocument> sources, List<String> orderedSources, Map<String, Integer> rankOf,
             Map<String, Map<Integer, Integer>> passageBackLinks, Set<String> highlightedPassages, Map<String, Integer> wordsPerSource) {
-        if (orderedSources.isEmpty()) {
+        if (orderedSources.isEmpty() || sourceTextMode == SourceTextMode.NONE) {
             return "";
         }
         Map<String, SourceDocument> sourceById = new HashMap<>();
@@ -574,10 +597,19 @@ public class OriginalityReportGenerator {
                     .append(rank).append("</span>").append(escape(sourceId)).append("</summary><div class=\"srctext\">");
             SourceDocument document = sourceById.get(sourceId);
             List<EmbeddedSentence> sentences = document.sentences();
+            Set<Integer> shown = sentencesToShow(sentences.size(), backLinks.keySet());
             int cursor = 0;
+            int previous = -2;
             for (int j = 0; j < sentences.size(); j++) {
+                if (!shown.contains(j)) {
+                    continue;
+                }
                 EmbeddedSentence sentence = sentences.get(j);
-                cursor = appendGap(html, document.text(), cursor, sentence.begin());
+                if (j == previous + 1) {
+                    cursor = appendGap(html, document.text(), cursor, sentence.begin());
+                } else {
+                    html.append("<span class=\"elision\">[…]</span> ");
+                }
                 String rendered = escape(textOf(document.text(), sentence.begin(), sentence.end(), sentence.text()));
                 Integer backLink = backLinks.get(j);
                 if (backLink != null) {
@@ -591,11 +623,37 @@ public class OriginalityReportGenerator {
                     html.append("<span>").append(rendered).append("</span>");
                 }
                 cursor = Math.max(cursor, sentence.end());
+                previous = j;
             }
-            appendGap(html, document.text(), cursor, document.text().length());
+            if (previous == sentences.size() - 1) {
+                appendGap(html, document.text(), cursor, document.text().length());
+            } else if (previous >= 0) {
+                html.append(" <span class=\"elision\">[…]</span>");
+            }
             html.append("</div></details>");
         }
         return html.append("</section>").toString();
+    }
+
+    /**
+     * Which of a source's sentences the report reproduces: all of them, or only the matched ones and a sentence of context
+     * either side. A matched sentence on its own often reads as an accusation without a defence — whether it is the
+     * subject's standard phrasing or genuinely lifted usually turns on what surrounds it — so the context is what makes an
+     * excerpt worth having at all.
+     */
+    private Set<Integer> sentencesToShow(int sentenceCount, Set<Integer> matchedIndices) {
+        if (sourceTextMode != SourceTextMode.EXCERPT) {
+            return IntStream.range(0, sentenceCount).boxed().collect(Collectors.toSet());
+        }
+        Set<Integer> shown = new HashSet<>();
+        for (int index : matchedIndices) {
+            for (int offset = -EXCERPT_CONTEXT_SENTENCES; offset <= EXCERPT_CONTEXT_SENTENCES; offset++) {
+                if (index + offset >= 0 && index + offset < sentenceCount) {
+                    shown.add(index + offset);
+                }
+            }
+        }
+        return shown;
     }
 
     /**
@@ -680,7 +738,9 @@ public class OriginalityReportGenerator {
         }
         html.append(" title=\"").append(escape(tooltip(attribution, rank))).append('"');
         html.append(" id=\"").append(queryAnchor(index)).append('"');
-        html.append(" href=\"#").append(passageAnchor(rank, attribution.sourceSentenceIndex())).append('"');
+        if (sourceTextMode != SourceTextMode.NONE) {
+            html.append(" href=\"#").append(passageAnchor(rank, attribution.sourceSentenceIndex())).append('"');
+        }
         html.append(" data-score=\"").append(String.format(Locale.ROOT, "%.3f", attribution.score())).append('"');
         html.append(" data-words=\"").append(wordCount(attribution.text())).append('"');
         html.append(" data-cat=\"").append(attribution.category().name()).append('"');
@@ -806,6 +866,7 @@ public class OriginalityReportGenerator {
                 + ".srcdoc summary{cursor:pointer;padding:12px 20px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}"
                 + ".srctext{padding:0 20px 20px;line-height:1.6;font-size:14px;color:#444;white-space:pre-wrap;overflow-wrap:break-word}"
                 + ".hit{background:#fff59d;border-radius:3px;padding:1px 2px;color:inherit;text-decoration:none}"
+                + ".elision{color:#bbb}a.match:not([href]),a.cand:not([href]){cursor:default}"
                 + ".match,.hit{scroll-margin:120px}.match:target,.hit:target{outline:3px solid #fb8c00;outline-offset:1px}"
                 + ".none{color:#888}footer{max-width:1280px;margin:8px auto 40px;padding:0 20px;color:#999;font-size:12px}";
     }

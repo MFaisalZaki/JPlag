@@ -118,9 +118,18 @@ OPENALEX_MAILTO=you@example.ac.uk \
   scripts/bibliography-corpus.py ./results/reports ./cited-corpus
 
 scripts/build-database.sh ./cited-corpus ./cited-index
-MINIMUM_WORD_OVERLAP=0.4 \
+MINIMUM_WORD_OVERLAP=0.4 SOURCE_TEXT=EXCERPT \
   scripts/run-plagiarism.sh ./submissions ./cited-index ./cited-results
 ```
+
+`SOURCE_TEXT` decides how much of a matched source each report reprints: `FULL`
+(the default) the whole thing, `EXCERPT` only the matched passages and a sentence
+of context either side, `NONE` nothing at all. Full text is right for a cohort's
+own submissions and is what makes a match checkable at a glance; against
+published or licensed material it reproduces far more of the source than the
+finding needs, which is a licence question as much as a size one. It is the size
+control as well — a 45-submission coursework produced 7.2 MB of reports at `FULL`
+and 2.3 MB at `EXCERPT`.
 
 Two caveats worth knowing before reading the output. The corpus is built from
 abstracts, so it tests whether a submission reproduces a paper's *abstract*, not

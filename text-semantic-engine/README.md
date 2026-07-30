@@ -63,6 +63,7 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--sentence-threshold <0-1>` | `0.85` | Sentence cosine similarity to count as a match. The report can be re-thresholded by its reader afterwards, within 0.10 below this and up to 1.0 — see [Reading a report down](#reading-a-report-down). |
 | `--minimum-word-overlap <0-1>` | `0` | Literal word overlap (Jaccard) a match must reach on top of the sentence threshold. Leave at `0` when the index holds the cohort's own submissions; raise it (`0.4` lightly edited, `0.8` near-verbatim) against published or reference material, whose standard sentences match everyone who states them correctly. |
 | `--show-attributed` | off | Also highlight quoted/cited matches (de-emphasized). |
+| `--source-text <FULL\|EXCERPT\|NONE>` | `FULL` | How much of a matched source the report reproduces — see [Reproducing the sources](#reproducing-the-sources). |
 | `--author <name>` / `--author-pattern <regex>` | (none) | The query documents' author, as at index time. |
 | `--[no-]exclude-same-author` | on | Never match a document against its own author's other indexed work (e.g. a resubmission). `--no-exclude-same-author` keeps such matches, flagged as self-plagiarism. |
 | `--extensions <a,b,…>` | text module's + `.pdf` | Comma-separated file extensions to include. |
@@ -119,6 +120,22 @@ Two orthogonal signals drive it. The **category** combines high *semantic* simil
 **By default, quoted/cited matches are hidden and excluded from the score** — acknowledged reuse is not plagiarism, so highlighting it would read as a false flag (like Turnitin's "exclude quotes and bibliography"). Pass `--show-attributed` to display them too, de-emphasized and marked ✓.
 
 Because matching is at the **sentence** level via SBERT alignment, paraphrased sentences are highlighted, not only verbatim copies. Each query sentence is attributed to its single best-matching source, so identical sources are not double-counted.
+
+### Reproducing the sources
+
+Under the document, the report reprints each matched source with the matched passages highlighted, so a reader can check a match without opening anything else. Against a cohort's own submissions — which the institution holds anyway — there is nothing to weigh against that, and it is the default.
+
+Against published material there is. A report that reprints several chapters of a set text to justify a handful of matched sentences reproduces far more of the book than the finding needs, and a licence that permits matching against a text does not necessarily permit redistributing it inside a document that then circulates. `--source-text` decides how much is reproduced:
+
+| | Reproduces | For |
+|---|---|---|
+| `FULL` (default) | the whole source, matches highlighted | the cohort's own submissions |
+| `EXCERPT` | the matched passages and a sentence of context either side, omissions marked `[…]` | published or licensed material |
+| `NONE` | nothing — sources are named and quantified only | where even excerpts are a problem |
+
+`EXCERPT` keeps a sentence either side because a matched sentence on its own reads as an accusation without a defence: whether it is the subject's standard phrasing or genuinely lifted usually turns on what surrounds it.
+
+It is also the practical control on report size, which matters once the sources are chapter-length rather than essay-length. On a 45-submission Art History coursework the reports came to 7.2 MB at `FULL` and 2.3 MB at `EXCERPT`.
 
 ### Self-plagiarism
 

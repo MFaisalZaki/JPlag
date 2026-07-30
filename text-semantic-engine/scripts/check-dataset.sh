@@ -37,6 +37,11 @@
 #   NO_EMBEDDINGS=1                 lexical-only run (forces BACKEND=TFIDF, no HTML reports).
 #   AUTHOR_PATTERN=<regex>          derive each file's author from its file name (first capture
 #                                   group), e.g. '^([0-9]+)-' for '<studentid>-essay.pdf' names.
+#   SOURCE_TEXT=<FULL|EXCERPT|NONE> how much of a matched source each report reproduces
+#                                   (default: FULL). EXCERPT keeps only the matched passages
+#                                   and a sentence of context either side; NONE names the
+#                                   sources without reproducing them — for corpora of
+#                                   published or licensed material.
 #   SAME_AUTHOR=<exclude|flag>      with AUTHOR_PATTERN: 'exclude' (default) never matches a file
 #                                   against the same author's other files (so a resubmission of
 #                                   the same essay is not reported as plagiarism); 'flag' keeps
@@ -54,7 +59,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -72,6 +77,7 @@ else
 fi
 SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
+SOURCE_TEXT="${SOURCE_TEXT:-FULL}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
 
@@ -141,7 +147,8 @@ echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-thre
 QUERY_ARGS=(query --index "$INDEX_DIR" --query "$DATASET_DIR"
             --backend "$BACKEND" --top-k "$TOP_K_ARG"
             --sentence-threshold "$SENTENCE_THRESHOLD"
-            --extensions "$(extensions_csv)")
+            --extensions "$(extensions_csv)"
+            --source-text "$SOURCE_TEXT")
 if [[ -n "$AUTHOR_PATTERN" ]]; then
   QUERY_ARGS+=(--author-pattern "$AUTHOR_PATTERN")
   [[ "$SAME_AUTHOR" == "flag" ]] && QUERY_ARGS+=(--no-exclude-same-author)

@@ -51,6 +51,16 @@
 #                                   for everyone who states them correctly, so
 #                                   there the wording has to decide, not the
 #                                   embedding.
+#   SOURCE_TEXT=<FULL|EXCERPT|NONE> how much of a matched source each report
+#                                   reproduces (default: FULL). FULL prints the
+#                                   whole source with its matches highlighted;
+#                                   EXCERPT prints only the matched passages and
+#                                   a sentence of context either side; NONE names
+#                                   the sources without reproducing them. Use the
+#                                   latter two against published or licensed
+#                                   material, where reproducing chapters of a set
+#                                   text to justify a few matched sentences goes
+#                                   well beyond what the finding needs.
 #   NAME_PATTERN=<regex>            name each document from its path rather than
 #   NAME_TEMPLATE=<template>        from the path itself, e.g. a template of
 #                                   '{ayr}-{module}-{assignment}-{student}' for a
@@ -68,7 +78,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,63p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,73p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 3 ]] || { usage; die "expected 3 arguments, got $#."; }
@@ -91,6 +101,7 @@ AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 MINIMUM_WORD_OVERLAP="${MINIMUM_WORD_OVERLAP:-0}"
+SOURCE_TEXT="${SOURCE_TEXT:-FULL}"
 NAME_PATTERN="${NAME_PATTERN:-}"
 NAME_TEMPLATE="${NAME_TEMPLATE:-}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
@@ -115,6 +126,7 @@ ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
       --sentence-threshold "$SENTENCE_THRESHOLD"
       --minimum-word-overlap "$MINIMUM_WORD_OVERLAP"
       --extensions "$(extensions_csv)"
+      --source-text "$SOURCE_TEXT"
       --html-report "$REPORTS_DIR")
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")

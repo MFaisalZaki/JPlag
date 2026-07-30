@@ -70,6 +70,11 @@
 #   SAME_AUTHOR=<exclude|flag>      matches to the same author's other work:
 #                                   'exclude' (default) drops them, 'flag' shows
 #                                   them as self-reuse.
+#   SOURCE_TEXT=<FULL|EXCERPT|NONE> how much of a matched source each report
+#                                   reproduces (default: FULL, the whole thing).
+#                                   EXCERPT keeps only the matched passages and a
+#                                   sentence either side, NONE reproduces nothing
+#                                   — use those against published material.
 #   FLAG_THRESHOLD=<0-100>          matched percentage at or above which a
 #                                   document is counted as flagged in the
 #                                   statistics (default: 20). Documents below it
@@ -99,7 +104,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,95p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,101p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -134,6 +139,7 @@ NAME_TEMPLATE="${NAME_TEMPLATE-$DEFAULT_NAME_TEMPLATE}"
 DEFAULT_COAUTHOR_PATTERN='\b2[0-9]{8}\b'
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN-$DEFAULT_COAUTHOR_PATTERN}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
+SOURCE_TEXT="${SOURCE_TEXT:-FULL}"
 FLAG_THRESHOLD="${FLAG_THRESHOLD:-20}"
 KEEP_INDEX="${KEEP_INDEX:-1}"
 RESUME="${RESUME:-0}"
@@ -298,7 +304,7 @@ for relative in "${COURSEWORKS[@]}"; do
   query_peak=0
   query_status=0
   if [[ "$index_status" -eq 0 ]]; then
-    export BACKEND TOP_K SENTENCE_THRESHOLD SAME_AUTHOR
+    export BACKEND TOP_K SENTENCE_THRESHOLD SAME_AUTHOR SOURCE_TEXT
     measure "$log" "$SCRIPT_DIR/run-plagiarism.sh" "$source_dir" "$result_dir/index" "$result_dir"
     query_seconds="$MEASURED_SECONDS"
     query_peak="$MEASURED_PEAK_MB"
