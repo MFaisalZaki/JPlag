@@ -31,7 +31,9 @@ import de.jplag.util.FileUtils;
 /**
  * Walks a directory recursively and turns every accepted file into one {@link AnalyzedSubmission} — a bag of normalized
  * terms plus the raw text. Each document is named by its path relative to the root, with the directory separators
- * encoded (e.g. {@code sub/dir/file.txt -> sub__dir__file}), so nested files stay distinct and traceable.
+ * encoded (e.g. {@code sub/dir/file.txt -> sub__dir__file}), so nested files stay distinct and traceable; a
+ * {@link DocumentNamer} can name them from the path's parts instead, which is how a report comes to be titled with the
+ * module and assignment rather than an export id.
  * <p>
  * Tokenization and normalization are delegated to the text module's {@link ParserAdapter} with WordNet lemmatization,
  * stop-word removal and synonym canonicalization all enabled. That normalization is fixed rather than configurable
@@ -47,15 +49,26 @@ public class SubmissionReader {
 
     private final ParserAdapter parserAdapter;
     private final List<String> fileExtensions;
+    private final DocumentNamer namer;
+
+    /**
+     * Creates the reader, naming each document by its path.
+     * @param fileExtensions the accepted file extensions, with or without a leading dot; matched case-insensitively.
+     */
+    public SubmissionReader(List<String> fileExtensions) {
+        this(fileExtensions, DocumentNamer.pathDerived());
+    }
 
     /**
      * Creates the reader.
      * @param fileExtensions the accepted file extensions, with or without a leading dot; matched case-insensitively.
+     * @param namer names each document from its path; see {@link DocumentNamer}.
      */
-    public SubmissionReader(List<String> fileExtensions) {
+    public SubmissionReader(List<String> fileExtensions, DocumentNamer namer) {
         this.parserAdapter = new ParserAdapter(normalizationOptions());
         this.fileExtensions = fileExtensions.stream().map(extension -> extension.toLowerCase(Locale.ROOT))
                 .map(extension -> extension.startsWith(".") ? extension : "." + extension).toList();
+        this.namer = namer;
     }
 
     /**
@@ -102,7 +115,8 @@ public class SubmissionReader {
         Path pdfTextDirectory = Files.createTempDirectory("jplag-semantic-pdf");
         try {
             for (File file : files) {
-                String name = uniqueName(stripExtension(relativePath(root, file).replace(File.separator, PATH_SEPARATOR)), usedNames);
+                String pathDerived = stripExtension(relativePath(root, file).replace(File.separator, PATH_SEPARATOR));
+                String name = uniqueName(namer.nameOf(file.toPath(), pathDerived), usedNames);
                 AnalyzedSubmission document = analyze(name, file, pdfTextDirectory);
                 if (document.isEmpty()) {
                     logger.warn("Document '{}' contains no usable terms and is skipped.", name);

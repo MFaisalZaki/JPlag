@@ -30,8 +30,12 @@
 # including everything in warned/ — is both indexed and checked, so warned
 # submissions are compared against the regular ones AND against each other. A
 # document is never matched against itself, nor against its own author's other
-# submissions (AUTHOR_PATTERN derives the author from the file name, so a
+# submissions (AUTHOR_PATTERN derives the author from the document's name, so a
 # resubmission of the same essay is not reported as plagiarism).
+#
+# Documents are named '<ayr>-<module>-<assignment>-<studentid>' after the path
+# they came from, so a report is titled with the facts a reader needs rather than
+# with export ids — see NAME_PATTERN / NAME_TEMPLATE below.
 #
 # Usage:
 #   scripts/run-all-courseworks.sh <dataset-root> <output-root>
@@ -42,9 +46,21 @@
 #                                   against (default: all).
 #   SENTENCE_THRESHOLD=<0-1>        sentence match cutoff (default: 0.85).
 #   AUTHOR_PATTERN=<regex>          regex extracting the author (student id) from
-#                                   each file name; default '^([0-9]+)-' suits
-#                                   '<studentid>-<assignment>-<submissionid>.pdf'.
-#                                   Set to '' to disable author handling.
+#                                   each document's name; default '([0-9]{8,})'
+#                                   picks the student id out of the name built by
+#                                   NAME_TEMPLATE. Set to '' to disable author
+#                                   handling.
+#   NAME_PATTERN=<regex>            how each document is named: the regex's groups
+#   NAME_TEMPLATE=<template>        are matched against the file's full path and
+#                                   the template puts them in order. The defaults
+#                                   turn
+#                                   '2025_6/AH1001/865937/240026012-MTP-4973291.pdf'
+#                                   into '2025_6-AH1001-MTP-240026012', so a report
+#                                   is titled with the academic year, module,
+#                                   assignment and student rather than with export
+#                                   ids; submissions under 'warned/' get a
+#                                   '-warned' suffix. Set both to '' to name
+#                                   documents by their file name as before.
 #   COAUTHOR_PATTERN=<regex>        every match of this regex on a document's
 #                                   cover sheet is a co-author; default
 #                                   '\b2[0-9]{8}\b' picks up every student id on
@@ -83,7 +99,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,79p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,95p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -93,9 +109,23 @@ OUTPUT_ROOT="$2"
 BACKEND="${BACKEND:-ENSEMBLE}"
 TOP_K="${TOP_K:-all}"
 SENTENCE_THRESHOLD="${SENTENCE_THRESHOLD:-0.85}"
-# The dataset's file names are '<studentid>-<assignment>-<submissionid>.pdf', so
-# the leading id identifies the author and lets resubmissions be excluded.
-AUTHOR_PATTERN="${AUTHOR_PATTERN-^([0-9]+)-}"
+# Documents are named from their path (NAME_PATTERN/NAME_TEMPLATE below), so the
+# student id is the one long run of digits in the name rather than its prefix.
+# This also matches the older '<studentid>-<assignment>-<submissionid>' names,
+# whose leading id is the first such run. Assigned via a variable: a '{n}'
+# quantifier inside ${VAR-default} is eaten by brace expansion, which silently
+# produces an invalid regex.
+DEFAULT_AUTHOR_PATTERN='([0-9]{8,})'
+AUTHOR_PATTERN="${AUTHOR_PATTERN-$DEFAULT_AUTHOR_PATTERN}"
+# Name each document for the people reading the report: academic year, module,
+# assignment, student — the facts they need — rather than the coursework and
+# submission ids the export happened to use. The layout is
+# '<ayr>/<module>/<coursework>/[warned/]<studentid>-<assignment>-<submissionid>.pdf'
+# and 'warned' is appended only where it applies.
+DEFAULT_NAME_PATTERN='(?<ayr>[^/]+)/(?<module>[^/]+)/[^/]+/(?<warned>warned)?/?(?<student>[0-9]+)-(?<assignment>.+?)-[0-9]+\.[^./]+$'
+NAME_PATTERN="${NAME_PATTERN-$DEFAULT_NAME_PATTERN}"
+DEFAULT_NAME_TEMPLATE='{ayr}-{module}-{assignment}-{student}-{warned}'
+NAME_TEMPLATE="${NAME_TEMPLATE-$DEFAULT_NAME_TEMPLATE}"
 # Paired and group courseworks are submitted once per member, so a submission
 # belongs to every student id printed on its cover sheet, not just the one in the
 # file name. Without this each partner's copy is a 100% match against the other.
@@ -258,7 +288,7 @@ for relative in "${COURSEWORKS[@]}"; do
 
   # Index the whole coursework, warned submissions included, so every document
   # can be matched against every other one.
-  export AUTHOR_PATTERN COAUTHOR_PATTERN
+  export AUTHOR_PATTERN COAUTHOR_PATTERN NAME_PATTERN NAME_TEMPLATE
   measure "$log" "$SCRIPT_DIR/build-database.sh" "$source_dir" "$result_dir/index"
   index_seconds="$MEASURED_SECONDS"
   index_peak="$MEASURED_PEAK_MB"

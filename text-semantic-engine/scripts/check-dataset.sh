@@ -42,13 +42,19 @@
 #                                   the same essay is not reported as plagiarism); 'flag' keeps
 #                                   such matches but renders them as self-reuse in the report.
 #
+# NAME_PATTERN / NAME_TEMPLATE (naming documents after their path, as
+# run-all-courseworks.sh does) are deliberately not supported here: this script
+# stages the corpus through a temporary directory, so the path a document is
+# indexed under is not the path it is queried under, and the two would end up
+# under different names. Documents keep their file names.
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }

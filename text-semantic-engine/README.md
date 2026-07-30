@@ -48,6 +48,7 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--author <name>` | (none) | Author of these documents; enables self-plagiarism handling at query time. |
 | `--author-pattern <regex>` | (none) | Derive each file's author from its file name (first capture group), e.g. `'^([0-9]+)-'` for `<studentid>-essay.pdf`. Unmatched files fall back to `--author`. |
 | `--extensions <a,b,…>` | text module's + `.pdf` | Comma-separated file extensions to include (leading dot optional). |
+| `--name-pattern <regex>` / `--name-template <template>` | (none) | Name each document from its path rather than by its path — see [Naming documents](#naming-documents). |
 | `--no-embeddings` | off | Build a lexical-only (BM25) index without downloading the model. |
 
 ### `query` options
@@ -65,8 +66,24 @@ For a ready-made build → index → check workflow, use the wrapper scripts in 
 | `--author <name>` / `--author-pattern <regex>` | (none) | The query documents' author, as at index time. |
 | `--[no-]exclude-same-author` | on | Never match a document against its own author's other indexed work (e.g. a resubmission). `--no-exclude-same-author` keeps such matches, flagged as self-plagiarism. |
 | `--extensions <a,b,…>` | text module's + `.pdf` | Comma-separated file extensions to include. |
+| `--name-pattern <regex>` / `--name-template <template>` | (none) | As at index time, and they have to agree — see [Naming documents](#naming-documents). |
 
 Ensemble scores are RRF rank-fusion values (small, rank-based), not `[0,1]` similarities — the *ranking* is the signal, which is also why no score cutoff is applied at retrieval.
+
+### Naming documents
+
+A document's name is its identity: the index key, the title of its report, and the name of the report file. By default it is the document's path relative to the directory you indexed, with the directory separators encoded — so a submission exported as `2025_6/AH1001/865937/240026012-MTP-4973291.pdf` and indexed at its coursework directory is called `240026012-MTP-4973291`. That is a student id, an assignment abbreviation and a submission id, of which the middle one is the only part a reader gets anything from.
+
+`--name-pattern` and `--name-template` name it from the path instead. The pattern is a regex matched against the document's **full path** (with `/` separators on every platform); the template puts its groups back in a readable order:
+
+```bash
+--name-pattern '(?<ayr>[^/]+)/(?<module>[^/]+)/[^/]+/(?<warned>warned)?/?(?<student>[0-9]+)-(?<assignment>.+?)-[0-9]+\.[^./]+$' \
+--name-template '{ayr}-{module}-{assignment}-{student}-{warned}'
+```
+
+names that same file `2025_6-AH1001-MTP-240026012`. Groups can be referred to by name (`{module}`) or by number (`{1}`). Anchor the pattern at the end with `$`, since the directories above a corpus differ from machine to machine. A group the path does not fill — `warned` here, which only some submissions sit under — contributes nothing and the separator that would have joined it is tidied away, so an optional part shows up only when it applies. Files the pattern does not match keep their default name, so a partly organized corpus still ingests in full.
+
+Because the name is the index key, `index` and `query` have to be given the same pattern and template, and changing the scheme means re-indexing. [`run-all-courseworks.sh`](scripts/run-all-courseworks.sh) applies the naming above by default; note that the author regex has to suit the resulting names (it defaults there to `([0-9]{8,})`, the one long run of digits, rather than a leading id).
 
 ### Extending the index
 

@@ -51,6 +51,12 @@
 #                                   for everyone who states them correctly, so
 #                                   there the wording has to decide, not the
 #                                   embedding.
+#   NAME_PATTERN=<regex>            name each document from its path rather than
+#   NAME_TEMPLATE=<template>        from the path itself, e.g. a template of
+#                                   '{ayr}-{module}-{assignment}-{student}' for a
+#                                   report titled '2025_6-AH1001-MTP-240026012'.
+#                                   Must be the same pair used at index time —
+#                                   the name is the index key.
 #
 # Examples:
 #   scripts/run-plagiarism.sh ./new-submissions ./corpus-index ./results
@@ -62,7 +68,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,57p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,63p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 3 ]] || { usage; die "expected 3 arguments, got $#."; }
@@ -85,6 +91,8 @@ AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
 SAME_AUTHOR="${SAME_AUTHOR:-exclude}"
 MINIMUM_WORD_OVERLAP="${MINIMUM_WORD_OVERLAP:-0}"
+NAME_PATTERN="${NAME_PATTERN:-}"
+NAME_TEMPLATE="${NAME_TEMPLATE:-}"
 [[ "$SAME_AUTHOR" == "exclude" || "$SAME_AUTHOR" == "flag" ]] || die "SAME_AUTHOR must be 'exclude' or 'flag', got '$SAME_AUTHOR'."
 
 require_java
@@ -111,6 +119,8 @@ ARGS=(query --index "$INDEX_DIR" --query "$QUERY_DIR"
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")
 [[ -n "$COAUTHOR_PATTERN" ]] && ARGS+=(--coauthor-pattern "$COAUTHOR_PATTERN")
+[[ -n "$NAME_PATTERN" ]] && ARGS+=(--name-pattern "$NAME_PATTERN")
+[[ -n "$NAME_TEMPLATE" ]] && ARGS+=(--name-template "$NAME_TEMPLATE")
 [[ "$SAME_AUTHOR" == "flag" ]] && ARGS+=(--no-exclude-same-author)
 
 echo ">> Running plagiarism check (backend=$BACKEND, top-k=$TOP_K, sentence-threshold=$SENTENCE_THRESHOLD)…"

@@ -35,9 +35,19 @@ public class CorpusCli implements Runnable {
     private static final String COAUTHOR_DESCRIPTION = "Regex whose every match on the first 2000 characters of a document "
             + "(its cover sheet) is a co-author, e.g. '\\b2[0-9]{8}\\b' for student ids. Needed for paired or group "
             + "courseworks, where each member submits the same document and the file name names only the submitter.";
+    private static final String NAME_PATTERN_DESCRIPTION = "Regex matched against each document's full path (with '/' "
+            + "separators) whose groups name the document, e.g. "
+            + "'(?<ayr>[^/]+)/(?<module>[^/]+)/[^/]+/(?<student>[0-9]+)-(?<assignment>.+?)-[0-9]+\\.[^./]+$'. Anchor it with "
+            + "'$', since the directories above a corpus vary by machine. Requires --name-template; paths it does not match "
+            + "keep the default name (their path relative to the indexed directory).";
+    private static final String NAME_TEMPLATE_DESCRIPTION = "The name to build from --name-pattern's groups, referred to by "
+            + "name ('{module}') or number ('{1}'), e.g. '{ayr}-{module}-{assignment}-{student}'. A group the path does not "
+            + "fill contributes nothing and the separators around it are tidied away, so an optional part appears only when "
+            + "it applies. The name is the index key and the report's title, so index and query have to use the same one.";
 
-    private static SubmissionReader reader(List<String> extensions) {
-        return new SubmissionReader(extensions == null || extensions.isEmpty() ? SubmissionReader.defaultFileExtensions() : extensions);
+    private static SubmissionReader reader(List<String> extensions, String namePattern, String nameTemplate) {
+        List<String> accepted = extensions == null || extensions.isEmpty() ? SubmissionReader.defaultFileExtensions() : extensions;
+        return new SubmissionReader(accepted, new DocumentNamer(namePattern, nameTemplate));
     }
 
     /** Stand-in for the SBERT embedder when only the lexical (BM25) signal is needed, so no model is loaded. */
@@ -81,9 +91,15 @@ public class CorpusCli implements Runnable {
         @Option(names = "--extensions", split = ",", description = EXTENSIONS_DESCRIPTION)
         private List<String> extensions;
 
+        @Option(names = "--name-pattern", defaultValue = "", description = NAME_PATTERN_DESCRIPTION)
+        private String namePattern;
+
+        @Option(names = "--name-template", defaultValue = "", description = NAME_TEMPLATE_DESCRIPTION)
+        private String nameTemplate;
+
         @Override
         public Integer call() throws Exception {
-            List<AnalyzedSubmission> submissions = reader(extensions).readDocuments(documents);
+            List<AnalyzedSubmission> submissions = reader(extensions, namePattern, nameTemplate).readDocuments(documents);
             AuthorResolver authorResolver = new AuthorResolver(author, authorPattern, coauthorPattern);
             try (DocumentEmbedder embedder = noEmbeddings ? noEmbedder() : new SbertEmbedder()) {
                 LuceneCorpusIndex index = new LuceneCorpusIndex(indexDirectory.toPath(), embedder);
@@ -160,9 +176,15 @@ public class CorpusCli implements Runnable {
         @Option(names = "--extensions", split = ",", description = EXTENSIONS_DESCRIPTION)
         private List<String> extensions;
 
+        @Option(names = "--name-pattern", defaultValue = "", description = NAME_PATTERN_DESCRIPTION)
+        private String namePattern;
+
+        @Option(names = "--name-template", defaultValue = "", description = NAME_TEMPLATE_DESCRIPTION)
+        private String nameTemplate;
+
         @Override
         public Integer call() throws Exception {
-            List<AnalyzedSubmission> queries = reader(extensions).readDocuments(queryDocuments);
+            List<AnalyzedSubmission> queries = reader(extensions, namePattern, nameTemplate).readDocuments(queryDocuments);
             AuthorResolver authorResolver = new AuthorResolver(queryAuthor, authorPattern, coauthorPattern);
             boolean needsSbert = backend != Backend.TFIDF || htmlReportDirectory != null;
             SbertEmbedder sbert = needsSbert ? new SbertEmbedder() : null;

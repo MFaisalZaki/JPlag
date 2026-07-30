@@ -34,6 +34,18 @@ class AuthorResolverTest {
     }
 
     @Test
+    void testFindsTheStudentInANameBuiltFromThePath() {
+        // Documents named '<ayr>-<module>-<assignment>-<student>' by DocumentNamer no longer start with the student id, so
+        // the batch scripts identify it as the one long run of digits instead. Getting this wrong is silent: authors come
+        // out empty, same-author exclusion stops working, and every resubmission is reported as plagiarism.
+        AuthorResolver resolver = new AuthorResolver("", "([0-9]{8,})", "");
+
+        assertEquals(Set.of("240026012"), resolver.authorsOf("2025_6-AH1001-MTP-240026012", ""), "neither the year nor the module code is an id");
+        assertEquals(Set.of("250009956"), resolver.authorsOf("2025_6-AH1001-MTP-250009956-warned", ""));
+        assertEquals(Set.of("240026012"), resolver.authorsOf("240026012-MTP-4973291", ""), "and the older file-name-based naming still resolves");
+    }
+
+    @Test
     void testUsesWholeMatchWhenPatternHasNoGroup() {
         AuthorResolver resolver = new AuthorResolver("", "^[0-9]+", "");
         assertEquals(Set.of("240008189"), resolver.authorsOf("240008189-Op-Ed-4959827", ""));

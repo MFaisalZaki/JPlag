@@ -23,6 +23,13 @@
 #                            e.g. '\b2[0-9]{8}\b' for student ids. Needed for
 #                            paired/group courseworks, where each member submits
 #                            the same document under their own name.
+#   NAME_PATTERN=<regex>     name each document from its path instead of from
+#   NAME_TEMPLATE=<template> the path itself: the regex's groups are matched
+#                            against the full path and the template puts them in
+#                            order, e.g. '{ayr}-{module}-{assignment}-{student}'
+#                            for a report titled '2025_6-AH1001-MTP-240026012'.
+#                            The name is the index key, so a query has to use the
+#                            same pair.
 #   NO_EMBEDDINGS=1          build a lexical-only (BM25) index; skips the SBERT
 #                            model download. Faster, but disables semantic/HTML
 #                            queries.
@@ -38,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-usage() { sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
 [[ $# -eq 2 ]] || { usage; die "expected 2 arguments, got $#."; }
@@ -48,6 +55,8 @@ INDEX_DIR="$2"
 AUTHOR="${AUTHOR:-}"
 AUTHOR_PATTERN="${AUTHOR_PATTERN:-}"
 COAUTHOR_PATTERN="${COAUTHOR_PATTERN:-}"
+NAME_PATTERN="${NAME_PATTERN:-}"
+NAME_TEMPLATE="${NAME_TEMPLATE:-}"
 
 require_java
 load_classpath
@@ -61,6 +70,8 @@ ARGS=(index --index "$INDEX_DIR" "$DOCS_DIR" --extensions "$(extensions_csv)")
 [[ -n "$AUTHOR" ]] && ARGS+=(--author "$AUTHOR")
 [[ -n "$AUTHOR_PATTERN" ]] && ARGS+=(--author-pattern "$AUTHOR_PATTERN")
 [[ -n "$COAUTHOR_PATTERN" ]] && ARGS+=(--coauthor-pattern "$COAUTHOR_PATTERN")
+[[ -n "$NAME_PATTERN" ]] && ARGS+=(--name-pattern "$NAME_PATTERN")
+[[ -n "$NAME_TEMPLATE" ]] && ARGS+=(--name-template "$NAME_TEMPLATE")
 [[ "${NO_EMBEDDINGS:-0}" == "1" ]] && ARGS+=(--no-embeddings)
 
 echo ">> Building index at '$INDEX_DIR'${AUTHOR:+ (author: $AUTHOR)}…"

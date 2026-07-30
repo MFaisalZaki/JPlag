@@ -170,9 +170,18 @@ output mirrors the input layout:
 
 Everything under a coursework is both indexed **and** checked, `warned/`
 included, so warned submissions are compared against the regular ones *and*
-against each other. `AUTHOR_PATTERN` (default `'^([0-9]+)-'`, matching
-`<studentid>-<assignment>-<submissionid>.pdf`) identifies each file's author so
-that a student's own resubmission is not reported as plagiarism.
+against each other.
+
+Documents are named after the path they came from, so a report is titled with
+the facts a reader needs rather than with export ids:
+`2025_6/AH1001/865937/240026012-MTP-4973291.pdf` becomes
+`2025_6-AH1001-MTP-240026012`, with a `-warned` suffix where it applies. Set
+`NAME_PATTERN=''` and `NAME_TEMPLATE=''` to go back to naming by file name, or
+override the pair for a differently organized corpus (see
+[the engine README](../README.md#naming-documents)). `AUTHOR_PATTERN` (default
+`'([0-9]{8,})'`, the one long run of digits in the name) identifies each
+document's author so that a student's own resubmission is not reported as
+plagiarism — if you change the naming, check that it still finds the student id.
 
 `stats.txt` records wall time and peak memory per coursework, then averages
 them per module and overall — peak RSS comes from `/usr/bin/time -l`, which
